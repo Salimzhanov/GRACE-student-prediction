@@ -1,0 +1,25 @@
+Subject: Revised Manuscript Submitted — [Manuscript ID] "Predicting Student Test Scores with Reliable Score Ranges Using Gradient Boosting and Conformal Prediction"
+
+Dear Handling Editor,
+
+I am writing on behalf of the authors of the above-referenced manuscript submitted to Applied Sciences (Section: Computing and Artificial Intelligence).
+
+We received the Round 1 reviewer comments approximately ten days before our formal response. We apologise for the gap between receipt of the comments and submission of the revised manuscript; the delay was due to the thoroughness of the revisions required. The revised manuscript was submitted through the MDPI online system on 30 September 2026.
+
+The revision addressed three main areas:
+
+1. Language and consistency — sentence-level edits throughout for clarity, consistent use of terminology (e.g. "score range" vs. "prediction interval"), and uniform formatting of model/metric names.
+
+2. Citation completeness — two passages flagged during our plagiarism check were rephrased and supported with appropriate references (five citations added at lines 161 and 210 of the revised manuscript).
+
+3. Response to all reviewer comments — a detailed reply-to-reviewers document accompanies the submission, addressing all 17 comments from Reviewers 1 and 2, with specific changes noted and line references to the revised manuscript.
+
+All revised files (GRACE.tex, GRACE.pdf, reply_to_reviewers.tex/.pdf, and supporting figures) have been uploaded to the submission portal.
+
+We are happy to address any further questions or provide additional clarification at your request.
+
+Kind regards,
+
+Abylay Salimzhanov (corresponding author)
+a.salimzhanov@kbtu.kz
+Kazakh-British Technical University

@@ -1,0 +1,1986 @@
+% GRACE.tex
+\pdfminorversion=7
+\documentclass[11pt]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{hyperref}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\title{Predicting Student Test Scores with Reliable Score Ranges:\\
+A Leakage-Free Streaming-Rating Study of 2.2 Million Records\\
+from a Private Kazakhstani UNT-Preparation Platform}
+
+\author{Abylay Salimzhanov$^{1,*}$, Artem Bykov$^{2}$, Aadm Ziro$^{2}$,\\[2pt]
+Ruslan Bulgakov$^{3}$, Aasso Ziro$^{1,3}$\\[4pt]
+$^{1}$School of Information Technologies,\\
+Kazakh-British Technical University (KBTU), Almaty, Kazakhstan\\
+$^{2}$International Information Technology University (IITU), Almaty, Kazakhstan\\
+$^{3}$Al-Farabi Kazakh National University (KazNU), Almaty, Kazakhstan\\[4pt]
+$^{*}$Corresponding author: a.salimzhanov@kbtu.kz\\
+ORCID: 0000-0001-6630-585X}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Reported accuracies in student performance prediction are frequently inflated by feature
+leakage and non-chronological evaluation, and point forecasts give educators no signal of
+when a prediction should not be trusted.
+We address both problems on 2,208,313 practice-test records from 55,482 students
+(2018--2025) on a Kazakhstani university-entrance-preparation platform.
+A factorial audit shows that two common feature-engineering errors combined with random
+splitting inflate the coefficient of determination by 0.349 relative to a leakage-free
+chronological protocol.
+We propose \textbf{GRACE} (Glicko-informed Rating-Augmented Confidence Estimation),
+a streaming rating layer that maintains per-student ability estimates and per-content
+difficulty estimates with a rating deviation that grows with inactivity and shrinks with
+each observation.
+The state is computed in a single chronological pass, making target leakage structurally
+impossible.
+The rating features feed an XGBoost + LightGBM gradient-boosted ensemble---compared
+against Ridge regression and Random Forest under controlled conditions, and a single-layer
+LSTM as a reference data point---that outputs a predicted score together with a 90\% score
+range whose width adapts to measured uncertainty.
+GRACE attains $R^{2} = 0.556$ (mean absolute error 11.72 percentage points) against
+0.444 for the leakage-free baseline, with stable out-of-time performance across five
+annual windows ($R^{2} = 0.522 \pm 0.052$ versus $0.288 \pm 0.151$ for the aggregate baseline).
+Score ranges closely approach the 90\% nominal coverage target (0.886 empirical, 1.4~pp below),
+with mean width 48.0~pp; coverage is consistent across RD strata (0.880--0.891).
+In a controlled comparison holding the feature set and training data constant,
+gradient-boosted trees outperform bagging (Random Forest: $R^{2}=0.517$) and
+linear models (Ridge: $R^{2}=0.489$) by confirmed margins.
+The rating layer updates in constant time without retraining, making honest,
+cold-start-aware prediction practical for operational platforms.
+
+\medskip\noindent
+\textbf{Keywords:} educational data mining; student performance prediction;
+knowledge tracing; Elo rating system; prediction intervals; data leakage;
+gradient boosting; out-of-time evaluation; conformal prediction;
+Unified National Testing
+\end{abstract}
+
+%% ===================================================================
+\section{Introduction}
+%% ===================================================================
+
+Quantitative prediction of student academic performance is a core task of educational data
+mining (EDM), enabling personalized instruction, early identification of at-risk learners,
+and evidence-based management of educational institutions~\cite{romero2020,zhang2021,baashar2021,aldin2024}.
+Two obstacles limit the practical value of reported accuracy.
+The first is evaluation validity.
+Leakage of future outcome information into features, and the use of random rather than
+chronological splits, together drive a reproducibility crisis in ML-based
+science~\cite{kapoor2023}; yet chronological evaluation remains rare in the
+student-performance literature~\cite{tashman2000,bergmeir2012}.
+The second obstacle is uncertainty quantification.
+A point forecast gives an educator no indication of how much a prediction can be trusted
+---a limitation that is most acute for students with little history or long inactivity,
+precisely the situations where reliable guidance matters most.
+
+In Kazakhstan, the Unified National Testing (UNT) serves as the principal gateway to
+university admission and state educational grants~\cite{didarbekova2025,oecd2017},
+generating high demand for private test-preparation platforms.
+Machine learning applications to education in the region remain small-scale and
+institution-specific~\cite{turkmenbayev2025}.
+No prior work has combined leakage-audited evaluation with reliable score ranges on
+longitudinal platform data at this scale from Central Asia.
+
+This study operates at a scale---2.2 million practice-test records from 55,482 students
+across seven years---that is two to three orders of magnitude larger than most EDM studies
+(which rarely exceed 10,000 students), introducing challenges of chronological evaluation,
+cohort turnover, and long-tail skill coverage that are difficult to study at smaller scales.
+
+This paper makes four contributions.
+\begin{enumerate}
+\item \textbf{GRACE: a hierarchical streaming rating system for continuous educational
+outcomes} in which the rating deviation serves a dual purpose: it acts as a real-time
+uncertainty state within the rating layer \emph{and} as the pre-specified grouping
+variable for Mondrian conformalized quantile regression, so that prediction-interval
+width adapts automatically to measured uncertainty.
+This dual use of a psychometric uncertainty state---predictive feature and
+interval-width selector---is, to our knowledge, new.
+
+\item \textbf{Asymmetric conformal score ranges.}
+LightGBM 3rd/97th-percentile quantile heads calibrated via fine-grained Mondrian
+conformal prediction (three rating-deviation bands) achieve 0.886 empirical coverage
+near the 90\% nominal target, adapting width to measured rating deviation so that
+high-uncertainty students receive wider ranges rather than suppressed predictions.
+
+\item \textbf{Factorial leakage audit and reusable evaluation protocol.}
+We quantify, on 2.2 million practice-test records, the joint evaluation optimism
+produced by two widespread feature-leakage patterns and random splitting ($+0.349$
+$R^{2}$)---a reusable audit pipeline transferable to any longitudinal test-log dataset.
+
+\item \textbf{Temporal validation and data characterization.}
+We validate GRACE under rolling-origin temporal evaluation across five expanding annual
+windows, report ablations, paired-bootstrap significance tests, and per-group range
+analysis.  We also characterize the corpus---one of the largest longitudinal test-preparation
+datasets reported from Central Asia---through a structured data-quality audit that
+reclassifies 40\% of exported rows as non-assessment telemetry rather than genuine
+student assessments.
+\end{enumerate}
+
+%% ===================================================================
+\section{Related Work}
+%% ===================================================================
+
+Three key gaps motivate GRACE: (i)~classical ML approaches to student
+performance prediction rarely use chronological evaluation protocols, inflating reported
+accuracy; (ii)~psychometric streaming methods (KT) target binary correctness and
+per-skill binary mastery rather than continuous percentage scores; and (iii)~conformal
+score ranges---providing probabilistic uncertainty bounds---are largely absent from
+deployed learning analytics.
+GRACE addresses all three.
+
+\textit{Student performance prediction with classical machine learning.}\quad
+Systematic reviews identify tree-based ensembles, support vector machines, neural
+networks, and regression models as the dominant method families, with tree ensembles most
+frequently among the top performers~\cite{romero2020,zhang2021,baashar2021,aldin2024,hellas2018}.
+Yagci~\cite{yagci2022} predicted undergraduate exam grades with Random Forests and gradient
+boosting (70--75\% accuracy, $\approx$1,850 students);
+the benchmark of Cortez and Silva~\cite{cortez2008} ($n=649$) demonstrated the value of
+prior-grade features, and Tomasevic et al.~\cite{tomasevic2020} confirmed that past
+performance and engagement dominate demographics.
+Typical sample sizes are two to three orders of magnitude below operational platform scale,
+and evaluation is overwhelmingly by random cross-validation~\cite{romero2020,zhang2021,hellas2018}.
+
+\begin{sloppypar}
+\textit{Tabular learners.}\quad
+Gradient-boosted decision trees---notably XGBoost~\cite{chen2016}---and Random
+Forests~\cite{breiman2001} remain the reference for heterogeneous tabular data;
+large-scale comparisons place them among the strongest general-purpose
+learners~\cite{fernandez2014}, matching or beating deep architectures on medium-sized
+tabular problems~\cite{grinsztajn2022,shwartz2022}.
+TabPFN, a tabular foundation model, reports state-of-the-art results on small-to-medium
+datasets without task-specific training~\cite{hollmann2025}.
+\end{sloppypar}
+
+\textit{Knowledge tracing and psychometrics.}\quad
+Bayesian Knowledge Tracing~\cite{corbett1994} models per-skill mastery as a latent state;
+Deep Knowledge Tracing~\cite{piech2015} and attention-based successors
+(SAINT~\cite{choi2020saint}, SAINT+~\cite{shin2021}) hold state-of-the-art results on
+binary-correctness corpora such as EdNet~\cite{choi2020ednet}.
+Careful comparisons show well-engineered feature-based models remaining
+competitive~\cite{khajah2016,gervet2020}, with deep models' advantage concentrated in
+long-history regimes~\cite{liu2021}.
+Item response theory treats observed scores as noisy measurements of latent
+ability~\cite{embretson2000}, but classical IRT estimation is an offline batch procedure
+ill-suited to streaming data.
+
+\textit{Rating systems as streaming psychometrics.}\quad
+The Elo rating system and its extensions occupy the gap between IRT rigor and online
+tractability: after every interaction, student ability and item difficulty are updated by a
+constant-time rule~\cite{klinkenberg2011,pelanek2016}.
+Multivariate extensions track ability per concept~\cite{abdi2019}, and Glicko-based
+variants~\cite{abdi2021,glickman1999} maintain a rating deviation (RD) that shrinks with
+observation and grows with inactivity.
+Graph neural network approaches to knowledge tracing exploit prerequisite and co-occurrence
+structure among skills~\cite{nakagawa2019,tong2020}, but require an explicit skill graph
+and a batch re-estimation pass.
+Existing educational applications of rating systems target binary correctness and adaptive
+item selection~\cite{settles2016}; neither using ratings as a feature layer for continuous-score
+regression nor using RD to set range widths has been demonstrated in
+streaming regression at operational scale.
+
+\textit{Prediction with score ranges.}\quad
+Distribution-free methods can wrap any predictor with a range guaranteed to contain the
+true value at a chosen rate~\cite{vovk2005,angelopoulos2023}; width can adapt to
+difficulty~\cite{romano2019,rossellini2024}, and guarantees can be enforced within declared
+groups~\cite{vovk2005}.
+Online and adaptive variants extend these guarantees to settings with temporal
+distribution shift~\cite{gibbs2021,zaffran2022}, though they have not yet been applied
+to learning-analytics regression pipelines.
+Reliable score ranges remain rare in deployed learning analytics,
+yet they are essential for responsible use of algorithmic predictions in educational
+settings~\cite{angelopoulos2023,kapoor2023}.
+
+%% ===================================================================
+\section{Materials and Methods}
+%% ===================================================================
+
+\subsection{Data and Quality Audit}
+
+\begin{sloppypar}
+Two datasets were exported from the operational database of the platform operator, a Kazakhstani
+UNT-preparation company.
+All records are anonymized; data are handled under an internal data-use agreement.
+The primary table contains records of in-platform practice assessments---intermediate
+tests administered within the platform, not official UNT results.
+Each record includes a student identifier, discipline, skill identifier, test-type
+category, raw score, maximum score, and timestamp.
+The auxiliary table contains 1,371 student attribute records including university admission
+status.  The complete analysis code is released with the paper.
+\end{sloppypar}
+
+\begin{table}[ht]
+\centering
+\caption{Overview of the two source datasets.}
+\label{tab:datasets}
+\begin{tabular}{lll}
+\toprule
+\textbf{Property} & \textbf{student\_performance\_data} & \textbf{student\_extra\_info} \\
+\midrule
+Unit of observation & Single test attempt & Student \\
+Records after cleaning & 2,208,313 & 1,371 \\
+Unique students & 55,482 & 1,371 \\
+Time coverage & 2018-06-13 -- 2025-06-30 & Cross-sectional \\
+Key fields & student ID, discipline, & student ID, admission \\
+ & skill, score, max\_score, & status, demographic \\
+ & timestamp & attributes (sparse) \\
+Target derived & Percentage score (0--100) & Admission status \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A structured data-quality audit preceded modeling (Table~\ref{tab:audit}).
+The dominant finding is structural: the platform stores 21 non-assessment metadata fields
+in the same column as skill identifiers---including timing telemetry, administrative
+counters, and satisfaction ratings---causing them to appear as pseudo-skill entries among
+actual assessment records.
+Cleaning removed 40.5\% of rows, leaving a 2,208,313-record assessment corpus of 55,482
+students across 30 assessment skills.
+
+\begin{table}[ht]
+\centering
+\caption{Data-quality audit of the 3,715,413-row export.}
+\label{tab:audit}
+\begin{tabular}{clrcl}
+\toprule
+\textbf{\#} & \textbf{Issue class} & \textbf{Rows affected} & \textbf{Share} & \textbf{Disposition} \\
+\midrule
+1 & Temporal anomalies & 7 & ${<}0.01\%$ & Removed \\
+2 & Pseudo-skill telemetry & 1,445,517 & 38.9\% & Removed; field list released \\
+3 & Exact duplicates & 42,445 & 1.1\% & Removed \\
+\midrule
+  & \textbf{Total removed} & \textbf{1,507,100} & \textbf{40.5\%} & \textbf{Cleaned corpus $=$ 2,208,313} \\
+\bottomrule
+\end{tabular}
+{\footnotesize Validation checks confirmed zero missing fields and zero out-of-range scores; no rows were removed by these checks.}
+\end{table}
+
+\paragraph{Pseudo-skill identification.}
+All unique \texttt{SkillName} values were inspected under three criteria:
+(a)~\textit{Administrative metadata}---fields recording session logistics, not a measured
+competency (test sequence number, session duration, mentor ID, school and department codes);
+(b)~\textit{Derived scores}---values computed from other scores in the same session
+(e.g., \texttt{Otsenka\_sreza} [section average], \texttt{Srez\_Obshchee} [session total],
+\texttt{Bally\_za\_test} [test points]),
+which would create direct target leakage; and
+(c)~\textit{Process indicators}---ordinal or binary fields for attempt logistics
+(rank, attempt count, feedback received).
+Each candidate was checked by examining its \texttt{max\_score} distribution: genuine
+skills show heterogeneous values across items, whereas pseudo-skills show degenerate
+distributions (e.g., always 1 for binary flags).
+Borderline cases were resolved against the platform data dictionary.
+The complete 21-entry exclusion list is in \texttt{PSEUDO\_SKILL\_NAMES} in the
+released code.
+
+Table~\ref{tab:sampleflow} traces the reduction from raw export to the modeling corpus
+and its subsequent partition.
+The aggregate baseline's effective test-set size is smaller (407,968 vs.\ 441,663)
+because aggregate features require at least one prior test record per student;
+the rating state always produces a prediction, so no rows are dropped for GRACE.
+The coverage evaluation uses 441,663 test records; the calibration set is reserved
+separately for the conformal quantile fit.
+
+\begin{table}[ht]
+\centering
+\caption{Sample flow: from raw export to modeling subsets.}
+\label{tab:sampleflow}
+\small
+\begin{tabular}{lrrl}
+\toprule
+\textbf{Stage} & \textbf{Rows} & \textbf{Students} & \textbf{Note} \\
+\midrule
+Raw export & 3{,}715{,}413 & 56{,}320 & Full platform dump \\
+$-$ Temporal anomalies & $-$7 & 0 & Timestamps out of range \\
+$-$ Pseudo-skill telemetry & $-$1{,}464{,}641 & 838 & 21 non-assessment fields \\
+$-$ Exact duplicates & $-$42{,}452 & 0 & Same student/skill/score/time \\
+\midrule
+\textbf{Clean corpus} & \textbf{2{,}208{,}313} & \textbf{55{,}482} & Modeling corpus \\
+\midrule
+Training set (70\%) & 1{,}545{,}819 & --- & Up to 2024-08-23 \\
+Calibration set (10\%) & 220{,}831 & --- & For conformal quantile / ES \\
+Test set (20\%) & 441{,}663 & --- & 2024-12-28 -- 2025-06-30 \\
+\addlinespace
+\quad Aggregate baseline test & 407{,}968 & --- & After NaN drop (first-attempt records) \\
+\quad Coverage evaluation & 441{,}663 & --- & Full test set (calibration set is separate) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The assessment corpus covers 55,482 students and 2,208,313 attempts (Figure~\ref{fig:corpus}).
+Percentage scores span 0--100 with mean 56.1\%.
+Mathematics is the most-tested discipline, followed by Logic, English, full
+UNT simulations, and Russian.
+
+Of the 1,371 exported attribute records, 1,329 match a student present in the assessment
+corpus.  Admission status is known for only $\approx$2.5\% of students; within this
+labelled subset, 98.4\% received a state grant---a ratio better explained by selective
+reporting (students achieving the celebrated outcome are more likely to report it) than by
+the population base rate, since grant allocation is competitive by design~\cite{didarbekova2025,oecd2017}.
+
+The unified target is the percentage score
+$y_{it} = 100 \cdot \text{score}/\text{max\_score} \in [0,100]$ (mean 56.1\%),
+chosen to accommodate heterogeneous test formats ranging from short quizzes to full
+120--140-point UNT simulations.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig1_corpus_overview.png}
+\caption{Corpus overview: (a) annual testing volume; (b) activity by calendar month;
+(c) percentage-score distribution; (d) distribution of attempts by discipline.}
+\label{fig:corpus}
+\end{figure}
+
+\subsection{Problem Statement}
+
+Let student $i$ produce a chronologically ordered sequence of attempts
+$(x_{i,1}, y_{i,1}), \ldots, (x_{i,t}, y_{i,t})$,
+where $y_{i,t} \in [0,100]$ and $x_{i,t} \in \mathbb{R}^{d}$ collects features available
+strictly before attempt~$t$.
+The regression task learns $f$ with $\hat{y}_{i,t} = f(x_{i,t})$, where
+$x_{i,t} = \varphi(\{(x_{i,k}, y_{i,k})\}_{k<t},\; c_{i,t})$ and $c_{i,t}$ denotes
+contextual identifiers of the upcoming test.
+The interval task additionally requires
+$\hat{C}(x_{i,t}) \subseteq [0,100]$ with
+$P(y_{i,t} \in \hat{C}) \ge 1-\alpha$,
+both overall and within declared uncertainty groups.
+All learning respects chronology: features are computed only from information available
+before the predicted attempt, and evaluation splits are chronologically consistent
+(Figure~\ref{fig:rollingorigin}).
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.85\textwidth]{fig_rolling_origin_v2.png}
+\caption{Rolling-origin temporal evaluation. Five expanding training windows (2018--2020
+through 2018--2024) each tested on the subsequent calendar year; no future information
+crosses fold boundaries. The rating state and all fold-level statistics are recomputed
+from scratch within each expanding window.}
+\label{fig:rollingorigin}
+\end{figure}
+
+\subsection{The GRACE Method}
+
+\textit{Overview.}\quad
+GRACE is a two-layer prediction system (Figure~\ref{fig:architecture}).
+The \textbf{first layer} is a streaming rating model that processes every test attempt in
+chronological order and maintains, for each student, multi-level ability estimates
+($\theta_{\text{global}}$, $\theta_{\text{disc}}$, $\theta_{\text{skill}}$) and their
+Glicko-style rating deviation (RD), and for each content unit, difficulty estimates.
+All state values are pre-attempt: the feature vector is extracted before the update rule
+runs, making target leakage structurally impossible.
+The \textbf{second layer} is an XGBoost + LightGBM gradient-boosted ensemble that takes
+the 70-dimensional pre-attempt state vector and produces both a point prediction and a
+conformal score range calibrated to the 90\% nominal coverage level.
+Rating parameters were tuned on a held-out 2018--2020 window; all other hyperparameters
+were set before any test-set result was observed.
+
+\textit{Layer 1: Streaming Multi-Level Rating State.}\quad
+Every attempt is treated as an encounter between student ability and content difficulty.
+For attempt $t$ of student $i$ on skill $j$ (discipline $s$, test type $c$), with
+fractional score $s_{it} = y_{it}/100$:
+
+\medskip\noindent
+\textit{Expected score:}
+\begin{equation}
+\hat{E}_{it} = \sigma\bigl(w_s\,\theta_{i,s} + w_j\,\theta_{i,j} - w_{dj}\,d_j - w_{dc}\,d_c\bigr),
+\quad \sigma(x) = 1/(1+e^{-x})
+\label{eq:expected}
+\end{equation}
+where $w_s = 0.5$, $w_j = 0.5$, $w_{dj} = 0.7$, $w_{dc} = 0.3$.
+
+\medskip\noindent
+\textit{Initialization.}\quad
+All ability ratings $\theta = 0$, all difficulty ratings $d = 0$, all rating deviations
+$\mathrm{RD}^2 = \mathrm{RD}_0^2$.
+
+\medskip\noindent
+Ability is tracked at three levels---global $\theta_i$, per-discipline $\theta_{i,s}$,
+per-skill $\theta_{i,j}$---following multivariate rating designs~\cite{abdi2019}, and
+difficulty at two---skill $d_j$ and test-type $d_c$.
+The Glicko element~\cite{glickman1999}: student-level states carry a rating deviation
+whose variance grows with inactivity,
+\begin{equation}
+\mathrm{RD}^2 \leftarrow \min\!\bigl(\mathrm{RD}^2 + c^2 \cdot \Delta t_{\text{days}},\;\mathrm{RD}_0^2\bigr),
+\end{equation}
+and shrinks with each observation via posterior-style updating; the gain is
+uncertainty-weighted,
+\begin{equation}
+K = K_0 \cdot \mathrm{RD}^2 / (\mathrm{RD}^2 + v),
+\end{equation}
+yielding fast adaptation for poorly measured students and stability for well-measured ones.
+
+\medskip\noindent
+\textit{Update rules.}\quad
+State updates are \textbf{simultaneous}: both ability and difficulty updates use the
+pre-update state.  Let $\delta = s_{it} - \hat{E}_{it}$.  For each ability level $\ell$:
+\begin{equation}
+\theta_\ell \leftarrow \theta_\ell + m_\ell \cdot K \cdot \delta,
+\end{equation}
+with update multipliers $m_{\text{global}} = 0.5$, $m_{\text{discipline}} = 1.0$,
+$m_{\text{skill}} = 1.5$.
+For each difficulty level:
+\begin{equation}
+d \leftarrow d - m_d \cdot K_{\text{item}} \cdot \delta,
+\end{equation}
+with $m_{d,\text{skill}} = 1.0$ and $m_{d,\text{ttype}} = 0.5$.
+
+\medskip\noindent
+\textit{RD shrinkage after observation:}
+\begin{equation}
+\mathrm{RD}^2 \leftarrow \max\!\bigl(\mathrm{RD}^2 \cdot v / (\mathrm{RD}^2 + v),\;\mathrm{RD}_{\min}^2\bigr).
+\end{equation}
+
+\medskip\noindent
+\textit{Categorical encoding.}\quad
+\begin{sloppypar}
+All categorical identifiers are encoded via
+\texttt{pandas.astype("category").cat.codes}.
+Composite keys (e.g., student--skill) use
+$\text{key} = \text{student\_code} \times (N_{\max}+1) + \text{sub\_code}$.
+\end{sloppypar}
+
+\medskip\noindent
+The feature vector for attempt $t$ is the pre-attempt state (Table~\ref{tab:features}).
+Because the entire state is produced by one chronological pass in which each row's features
+precede its update, target leakage is structurally impossible.
+All 70 features and the rating hyperparameters were fully pre-specified in the analysis
+code before the test-set results were computed.
+The rolling-origin folds each enforce an independent chronological boundary: the rating
+state is built from scratch within each expanding window, so no future information from
+later folds contaminates earlier ones.
+The rating table is an $O(S+J)$ online model ($S$ students, $J$ skills): each incoming
+result updates the state in $O(1)$ time with no retraining.
+
+\begin{table}[ht]
+\centering
+\caption{GRACE feature set (70 features total).
+Core rating features (26): global/disc/skill ability and RD, expected score, surprise.
+Group A (EMA skill difficulty, max-score family, multi-window per-skill statistics; +20).
+Group B (per-skill RD, student platform context, static content norms, cyclical time; +14).
+Group C (global cross-discipline rolling statistics, within-session context, exam-proximity signals; +9).
+Group D (forgetting curves, score velocity, nonlinear ability signals; +9).
+All values are pre-attempt states from a single chronological pass.}
+\label{tab:features}
+\footnotesize
+\begin{tabular}{@{}p{2.1cm}p{5.9cm}p{5.5cm}@{}}
+\toprule
+\textbf{Group} & \textbf{Features} & \textbf{Role} \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Core rating state (26 features)}} \\
+Ability & $\theta_{\text{global}}$, $\theta_{\text{disc}}$, $\theta_{\text{skill}}$ & Multi-resolution mastery \\
+Uncertainty & $\mathrm{RD}_{\text{global}}$, $\mathrm{RD}_{\text{disc}}$ & Grows with inactivity \\
+Difficulty & $d_{\text{skill}}$, EMA $d_{\text{skill}}$, $d_{\text{testtype}}$ & Content difficulty + short-run trend \\
+Model-implied & Expected score $\hat{E}$, surprise$_5$ & Momentum vs.\ expectation \\
+Engagement & Days since last (global, disc., skill), $n_{\text{global}}/n_{\text{disc}}/n_{\text{skill}}$, gap buckets & Exposure and recency \\
+Test format & max\_score, $\log$(max\_score), score granularity, ttype\_id & Scoring resolution \\
+Context & Month, day of week; disc., skill, test-type codes & Calendar and content IDs \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Group A: aggregate \& derived features (+20)}} \\
+Aggregate & Rolling-3/5/10/disc.\ mean, expanding mean/std, lag-1 (disc.\ \& skill), skill rolling, attempt count, trend, volatility & Multi-window statistics \\
+Derived & $\theta_g{-}\theta_d$, $\theta_s{-}d_s$, surprise${\times}n_d$, cold-start flags, $\hat{E}$ residual, trend & Interactions and trends \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Group B: per-skill uncertainty \& platform context (+14)}} \\
+Skill uncertainty & $\mathrm{RD}_{\text{skill}}$ & Per-skill Glicko deviation; enables correct skill-level gain $K_s$ \\
+Platform context & Student tenure, disc.\ breadth, skill breadth, intensity & Study engagement depth and breadth \\
+Static difficulty & $\bar{y}_{\text{disc}}$, $\sigma_{\text{disc}}$, $\bar{y}_{\text{skill}}$, $\sigma_{\text{skill}}$ (train-computed); $\theta_{\text{skill}}-\bar{y}_{\text{disc}}$ & Content norms and relative ability \\
+Cyclical time & $\sin/\cos(\text{month})$, $\sin/\cos(\text{day-of-week})$ & Periodic calendar encoding \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Group C: global state, session \& exam proximity (+9)}} \\
+Global state & $y^{(g)}_{\text{lag}1}$, $\bar{y}^{(g)}_3$, $\bar{y}^{(g)}_5$, $\bar{y}^{(g)}_{10}$, $\sigma^{(g)}_5$; $\hat{E}{-}\bar{y}^{(g)}_5$ & Cross-discipline rolling: today's performance state (deque of last 10 attempts) \\
+Session context & Session position (0-indexed), running session mean & Within-session dynamics: warm-up and fatigue effects \\
+Exam proximity & Days until UNT June exam (clipped to $[0,365]$) & Kazakhstan UNT preparation-intensity signal \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Group D: forgetting curves, score velocity, nonlinear ability signals (+9)}} \\
+Forgetting & $e^{-\Delta t_{\text{disc}}/30}$, $e^{-\Delta t_{\text{skill}}/20}$; $\theta_{\text{disc}} \cdot e^{-\Delta t_{\text{disc}}/30}$ & Per-disc/skill exponential retention decay; ability-weighted expected retention \\
+Velocity & Linear slope of last 5 per-disc.\ and global pct scores (pp/attempt); $\mathrm{RD}_{\text{skill}} - \mathrm{RD}_{\text{disc}}$ & Score trend direction; per-skill uncertainty surplus above discipline baseline \\
+Nonlinear & Personal best disc.\ score; $\theta_{\text{disc}}^2$; $\Delta t_{\text{disc}} - \Delta t_{\text{skill}}$ & Ceiling-approach signal; ability curvature near ceiling; cross-level gap trend \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Feature and hyperparameter pre-specification.}
+Rating-layer parameters ($K_0 = 0.35$, $V_{\text{gain}} = 0.04$, $\mathrm{RD}_0 = 0.35$,
+$c^2 = 0.01$) and XGBoost hyperparameters were selected on the training-plus-calibration
+partition and fixed before examining the test set.
+All 70 features were specified and frozen prior to test-set access.
+Rating updates during the test period proceed row by row in chronological order---the
+feature for attempt $t$ uses the rating state from all rows before $t$---which matches
+deployment behavior and precludes any lookahead.
+
+\paragraph{Per-skill uncertainty and ensemble learning.}
+\label{sec:skilluncertainty}
+
+\textit{Per-skill rating deviation ($\mathrm{RD}_{\text{skill}}$).}\quad
+The core rating layer uses the discipline-level gain
+$K_{\text{disc}} = K_0 \cdot \mathrm{RD}_{\text{disc}}^2 / (\mathrm{RD}_{\text{disc}}^2 + v)$
+for skill-level updates.
+Group B introduces a per-(student, skill) variance $v_s$ that decays with skill-level inactivity
+and shrinks with each skill observation, yielding a dedicated gain
+$K_s = K_0 \cdot v_s / (v_s + v)$.
+This restores the Glicko invariant at the skill level: students who have not practiced a
+specific skill recently receive a higher $K_s$ (more responsive updates) regardless of their
+discipline-level activity, and $\mathrm{RD}_{\text{skill}}$ becomes a standalone feature
+capturing skill-granularity uncertainty.
+
+\textit{Student platform context.}\quad
+Four streaming features are appended to the rating state without future lookahead:
+student tenure (days since first platform appearance), discipline breadth and skill breadth
+(count of distinct disciplines and skills practiced before attempt $t$), and study intensity
+(total attempts divided by tenure, capped at 20 per day).
+These capture platform-engagement patterns orthogonal to per-discipline performance history.
+
+\textit{Train-derived static content norms.}\quad
+For each discipline and skill, the training partition's mean and standard deviation of
+percentage scores are computed and broadcast to all rows as static context features.
+A derived relative-ability feature $\theta_{\text{skill}} - \bar{y}_{\text{disc}}$
+expresses the student's skill-level rating relative to the cohort's observed difficulty
+for that discipline.
+Because these statistics are computed exclusively from training rows and applied as
+read-only lookups, no future score information enters the feature vector.
+In rolling-origin evaluation, statistics are recomputed within each fold's training window.
+
+\textit{Cyclical time encoding.}\quad
+Integer month and day-of-week encodings are supplemented by their sine and cosine
+projections ($\sin(2\pi m/12)$, $\cos(2\pi m/12)$, $\sin(2\pi d/7)$, $\cos(2\pi d/7)$),
+allowing gradient-boosted trees to exploit calendar periodicity without ordinality assumptions.
+
+\textit{LightGBM ensemble.}\quad
+A LightGBM regressor~\cite{ke2017} (leaf-wise growth, 255 leaves, learning rate 0.02,
+early stopping on the calibration set) is trained on the same feature set as XGBoost.
+Leaf-wise growth allows LightGBM to capture finer-grained interactions between ability
+ratings and content features.
+The ensemble prediction is $\hat{y} = \alpha\,\hat{y}_{\text{XGB}} + (1-\alpha)\,\hat{y}_{\text{LGB}}$,
+where $\alpha$ is selected by grid search on the calibration set to maximise $R^2$.
+XGBoost hyperparameters are additionally searched with Optuna~\cite{akiba2019} (30 trials,
+Tree-structured Parzen Estimator) on the calibration set.
+Table~\ref{tab:hyperparams} lists all hyperparameters.
+
+\paragraph{Global state, session context, and exam proximity.}
+\label{sec:globalfeatures}
+Three feature categories capture information structurally absent from the per-discipline rating features.
+
+\textit{Cross-discipline global rolling statistics.}\quad
+Prior rolling averages are per-student per-discipline; no feature captures the student's
+performance state across all topics simultaneously.
+Six features are maintained in a per-student deque of the most recent ten
+attempts across any discipline: lag-1 global score, rolling means at windows 3, 5, and 10
+($\bar{y}^{(g)}_3$, $\bar{y}^{(g)}_5$, $\bar{y}^{(g)}_{10}$), rolling standard deviation
+at window 5 ($\sigma^{(g)}_5$), and the ability-state gap $\hat{E} - \bar{y}^{(g)}_5$.
+The last feature quantifies how the current Glicko expectation diverges from the student's
+recent cross-discipline performance---a proxy for daily cognitive state orthogonal to
+topic-specific ability.
+In feature importance rankings, $\bar{y}^{(g)}_{10}$ and $\sigma^{(g)}_5$ each rank in
+the top 14 of 70 features (LightGBM split importance).
+
+\textit{Within-session context.}\quad
+A study session is defined as a consecutive sequence of attempts by the same student with
+inter-attempt gaps below one hour (3{,}600 s).
+Two features are appended: \textit{session position} (zero-indexed attempt number within the
+current session) and \textit{running session mean} (mean score of prior attempts in the same
+session, excluding the current test).
+Both are computed from the sorted timestamp sequence with a single forward pass and no
+lookahead.
+
+\textit{Exam-proximity features.}\quad
+The Kazakhstani Unified National Testing (UNT) examination is administered in June.
+Students systematically intensify preparation in the preceding months.
+GRACE encodes this calendar signal as \textit{days\_to\_june} (days until June 1 of the
+test year, clipped to $[0, 365]$) and an \textit{in\_exam\_season} binary indicator for
+February--May.
+In LightGBM importance rankings, \textit{days\_to\_june} places sixth overall (2.4\% of
+total split importance), confirming that the UNT calendar is a genuine predictive signal.
+
+\textit{LightGBM Optuna tuning and temporal sample weighting.}\quad
+Optuna tunes LightGBM (50 trials, TPE) over num\_leaves $\in [63, 511]$, learning rate,
+min\_child\_samples, feature and bagging fractions, and L1/L2 regularization
+(Table~\ref{tab:hyperparams}).
+XGBoost uses conservative fixed parameters to avoid validation-set overfitting during search.
+Training examples are weighted by an exponential recency factor (half-life 730 days,
+weight range $[0.21, 1.78]$) to reduce sensitivity to distribution shift between the
+2018--2024 training window and the 2024--2025 test period.
+
+\textit{Layers 2--3: Predicted Score and Uncertainty-Adjusted Score Range.}\quad
+An XGBoost model predicts the score; two LightGBM models trained with 3rd- and 97th-percentile
+quantile losses predict the lower and upper edges of a 90\% score range (asymmetric CQR).
+The raw edges are adjusted on a chronologically later held-out block: for each attempt we
+measure how far the true score escapes the predicted range,
+$E_t = \max\{\hat{q}_{\text{lo}}(x) - y,\; y - \hat{q}_{\text{hi}}(x)\}$~\cite{romano2019},
+and widen all future ranges by the smallest amount that keeps 90\% of these escapes
+inside~\cite{vovk2005}.
+This widening is computed separately within three rating-deviation (RD) bands,
+so the conformal guarantee is applied within every uncertainty group
+(fine-grained Mondrian conformal prediction~\cite{vovk2005}); empirical per-group coverage with
+confidence intervals is reported in Section~4.4.
+Ranges are clipped to $[0,100]$.
+Width grows with rating deviation: high-RD (cold-start) students receive honestly wider ranges.
+Figure~\ref{fig:architecture} summarizes the architecture.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.75\textwidth]{fig3_architecture.png}
+\caption{The GRACE architecture: a single chronological pass maintains the rating state,
+whose pre-attempt values form the feature vector for the boosted models; the rating
+deviation both feeds the predictor and selects the width-adjustment group.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Baselines and Evaluation}
+
+\textit{Baselines and model characteristics.}\quad
+Four models are compared.
+\textbf{XGBoost}~\cite{chen2016} builds a gradient-boosted ensemble of shallow decision trees;
+each tree corrects the residuals of preceding trees, making it effective at capturing
+nonlinear interactions between ability ratings, difficulty, and inactivity gaps.
+It serves as the core learner in GRACE and the primary baseline.
+
+\textbf{Random Forest}~\cite{breiman2001} trains independent trees via bagging, averaging
+their outputs; it is robust to overfitting and widely used in prior student-performance
+work~\cite{fernandez2014}.
+It serves as the bagging representative, methodologically complementary to boosting.
+
+\begin{sloppypar}
+\textbf{LSTM} (Long Short-Term Memory) processes each student's last 10 attempts
+sequentially via a 64-unit recurrent hidden state (8 rating-derived features per step),
+with its advantage concentrated in long-history regimes~\cite{piech2015,khajah2016,gervet2020,liu2021}.
+\end{sloppypar}
+
+The primary baseline is a leakage-free aggregate-feature XGBoost: strictly-prior expanding
+and rolling statistics of percentage scores per discipline (shift-then-aggregate), lag-1
+score, attempt index, recency, calendar, and content identifiers.
+Deep sequence models were excluded from the primary comparison because their
+competitiveness concentrates in long-history regimes and require tuning budgets
+that confound the feature-layer comparison~\cite{khajah2016,gervet2020,liu2021}.
+As an additional baseline, we trained a single-layer LSTM (hidden size 64, 10-step
+sequences, 8 rating-derived input features) on 200{,}000 sub-sampled training
+sequences: it attained $R^{2} = 0.230$ (MAE 16.59) on 402{,}322 test sequences,
+compared with $R^{2} = 0.556$ for GRACE.
+The comparison is presented as a reference point rather than a controlled ablation:
+the LSTM uses fewer features (8 vs.\ 26), less training data (200{,}000 vs.\ 1.5\,M),
+and a fundamentally different learning mechanism, so the gap reflects the combined
+effect of these differences rather than isolating any single factor.
+TabPFN~\cite{hollmann2025} was excluded: it is benchmarked for $n \le 10{,}000$,
+and sub-sampling to that scale would address a different question from platform-scale evaluation.
+Table~\ref{tab:hyperparams} lists all hyperparameters.
+
+\begin{table}[ht]
+\centering
+\caption{Complete hyperparameter disclosure.
+Rating hyperparameters selected on the 2018--2020 development window and frozen.
+LightGBM hyperparameters are Optuna-searched (50 trials, TPE) on the calibration
+set; best values reported. XGBoost uses fixed conservative parameters.}
+\label{tab:hyperparams}
+\small
+\begin{tabular}{@{}lp{5.5cm}l@{}}
+\toprule
+\textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+XGBoost (fixed) & n\_est (max) / early\_stopping & 2000 / 50 \\
+ & depth / lr / subsample & 8 / 0.04 / 0.8 \\
+ & colsample / min\_child / $\lambda$ / $\alpha$ & 0.7 / 5 / 2.0 / 0.2 \\
+ & objective (score; interval edges) & sqerror; quantile \\
+LightGBM (Optuna) & num\_leaves / lr / n\_est (max) & 294 / 0.019 / 5000 \\
+ & bagging\_fraction / bagging\_freq & 0.895 / 1 \\
+ & feature\_fraction / min\_child\_samples & 0.544 / 91 \\
+ & $\lambda$ / $\alpha$ / early\_stopping & 2.82 / 0.42 / 50 \\
+Ensemble & XGB weight $\alpha$ & Cal.-set grid search ($\alpha=0.15$) \\
+Temporal weights & Half-life / weight range & 730 days / [0.21, 1.78] \\
+Optuna (LGB) & Trials / sampler & 50 / TPE \\
+Random Forest & n\_est / depth / min\_leaf & 300 / 20 / 25 \\
+ & max\_feat / train subsample & sqrt / 300\,K \\
+Rating layer & $K_0 / v / \mathrm{RD}_0 / \mathrm{RD}_{\min} / c^2 / K_{\text{item}}$ & 0.35 / 0.04 / 0.35 / 0.06 / 0.01 / 0.02 \\
+Rating weights & $w_s / w_j / w_{dj} / w_{dc}$ & 0.5 / 0.5 / 0.7 / 0.3 \\
+Multipliers & global / disc / skill / diff / ttype & 0.5 / 1.0 / 1.5 / 1.0 / 0.5 \\
+Score range & $\alpha$ / strata & 0.10 / 28 (4 hist.-depth $\times$ 7 disc. bins) \\
+Environment & Python / xgboost / lightgbm / seed & 3.12 / 3.x / 4.7 / 42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Evaluation protocol.}\quad
+Primary split: chronological 70/10/20 (train / range-adjustment / test); the leakage
+audit and rolling-origin analyses use 80/20.
+
+\textit{Leakage audit (factorial).}\quad
+All four combinations of two feature conditions (clean vs.\ leaky) crossed with two split
+protocols (chronological vs.\ random).
+Differences are attributable solely to protocol.
+
+\textit{Rolling-origin evaluation.}\quad
+Five expanding windows~\cite{tashman2000,bergmeir2012}: train 2018--2020 $\to$ test 2021,
+through train 2018--2024 $\to$ test 2025 (Figure~\ref{fig:rollingorigin}).
+
+\textit{Ablations.}\quad
+Six variants removing one component group at a time: rating-deviation features;
+skill-level ability; surprise features; inactivity gap; aggregate supplement; and RD time
+decay.
+
+\textit{Metrics.}\quad
+\label{sec:metrics}
+$\text{MAE} = \frac{1}{n}\sum_{i=1}^{n}|\hat{y}_i - y_i|$ (percentage points) and
+$R^{2} = 1 - \frac{\sum(\hat{y}_i - y_i)^2}{\sum(y_i - \bar{y})^2}$,
+both computed per attempt (i.e., one observation per row in the test set).
+Per-student $R^{2}$ is reported separately in Section~4.2 and uses within-student variance.
+For score ranges: coverage (fraction of test attempts where the true score falls inside
+the predicted range) and mean width (in percentage points), reported overall and per
+uncertainty group.
+GRACE versus baseline: paired bootstrap (2{,}000 resamples on test-set residuals;
+95\% CI on $\Delta R^{2}$ and $\Delta$MAE); one-sided $p < 0.001$ confirmed on
+441{,}663 matched test rows.
+Analysis code released; all runs use fixed seeds.
+
+\medskip\noindent\textit{Note on varying sample sizes.}\quad
+Table~\ref{tab:sampleflow} traces row counts from raw export to model evaluation.
+Test-set sizes differ across tables because each comparison uses the largest valid
+intersection for that model pair.
+The aggregate baseline excludes first-attempt rows with undefined lag features (NaN),
+leaving 407,968 rows for the paired bootstrap (Table~\ref{tab:headline}).
+GRACE uses 441,663 test rows because its rating state is valid from attempt~1.
+The imputed-baseline check (Section~5.2) substitutes the global mean for missing
+aggregates and keeps 445,489 rows.
+Within each table, all models use identical rows.
+
+
+We propose that EDM studies report: (i) an explicit statement that history features
+exclude the predicted attempt, (ii) the split protocol with chronological boundaries,
+and (iii) where feasible, the leaky-versus-clean delta.
+The streaming construction offers a structural remedy: when features are the pre-attempt
+state of an online model, there is no per-feature bookkeeping error to make.
+
+%% ===================================================================
+\section{Results}
+%% ===================================================================
+
+Results are reported under three evaluation protocols (Section~3.4), so the same model
+yields different values across sections.
+The headline comparison (Section~4.2) trains on 70\% of the data (70/10/20 split with a held-out calibration partition); the ablation reference
+(Table~\ref{tab:ablation}) trains on 80\% (80/20 split, no calibration partition)---more training data, same architecture (ablation reference $R^{2}=0.519$; lower than headline 0.556 solely due to the different split, not model quality);
+rolling-origin folds (Section~4.3) train only on completed years, the hardest setting
+($0.522 \pm 0.052$).
+Wherever two models are compared, test rows are identical.
+
+\subsection{Leakage Audit}
+
+The analysis proceeded in stages of increasing methodological rigor.
+An initial exploratory analysis applied XGBoost and Random Forest regressors to the
+uncleaned export (3.66\,M rows) with whole-dataset aggregate features
+(\texttt{student\_discipline\_avg}, \texttt{student\_avg\_perf}) and a random
+train/test split, yielding $R^{2} = 0.752$ (MAE 9.25) and $R^{2} = 0.700$
+(MAE 10.71), respectively.
+These results motivated the data-quality audit of Section~3.1 and the systematic
+evaluation protocol developed below.
+
+Table~\ref{tab:leakage} and Figure~\ref{fig:leakage} report the factorial audit
+that decomposes the initial $R^{2} = 0.752$ into predictive signal and
+evaluation artifact.
+On the cleaned corpus, the same leaky-feature--random-split protocol yields an even
+higher $R^{2} = 0.793$ (MAE 7.36): removing the 1.45\,M pseudo-skill telemetry rows
+reduces noise and raises the inflated estimate further.
+The fully corrected protocol (leakage-free features, chronological split) yields
+$R^{2} = 0.444$ (MAE 13.29).
+The joint optimism is therefore $\Delta R^{2} = +0.349$
+($\Delta\text{MAE} = +5.92$ points)---accuracy that exists only in evaluation, not in
+deployment.
+Feature leakage is the dominant factor ($+0.295$ $R^{2}$): aggregate statistics computed
+without excluding the current attempt make the feature a partial proxy for the target,
+and backward-fill propagates future scores into the past.
+Random splitting contributes an additional $+0.054$ $R^{2}$ by allowing future
+observations to inform training.
+The initial $R^{2} = 0.752$ thus decomposes into approximately $0.444$ (honest signal)
+$+$ $0.308$ (evaluation artifact from leakage and split combined, partially offset by
+noise from uncleaned data).
+All subsequent results use the fully corrected protocol.
+
+The $+0.349$ inflation is driven by the feature-engineering protocol, not by the choice
+of learner: the same leaky features applied to a Random Forest yield $R^{2} = 0.774$
+under random splitting and $R^{2} = 0.451$ under chronological evaluation
+($\Delta R^{2} = +0.323$), confirming that the optimism arises from label look-ahead
+embedded in the features themselves rather than from XGBoost's ability to memorize
+training patterns.
+
+\begin{table}[ht]
+\centering
+\caption{Factorial leakage audit.  All rows use the same XGBoost configuration;
+differences are due solely to evaluation protocol.  The first row reproduces the
+initial exploratory analysis on uncleaned data; subsequent rows isolate the effect
+of data cleaning, feature leakage, and split protocol.}
+\label{tab:leakage}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Data} & \textbf{Features} & \textbf{Split} & $R^{2}$ & \textbf{MAE (pp)} \\
+\midrule
+Uncleaned (3.66\,M) & Leaky & Random & 0.752 & 9.25 \\
+\addlinespace
+Cleaned (2.21\,M) & Leaky & Random & 0.793 & 7.36 \\
+Cleaned & Leaky & Chronological & 0.773 & 8.08 \\
+Cleaned & Clean & Random & 0.498 & 12.09 \\
+Cleaned & Clean & Chronological (ref.) & 0.444 & 13.29 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.8\textwidth]{fig4_leakage_audit.png}
+\caption{Out-of-sample $R^{2}$ across evaluation conditions.
+The combined optimism from feature leakage and random splitting is
+$\Delta R^{2} = +0.349$.
+The initial exploratory result ($R^{2} = 0.752$) falls between the leaky conditions
+on cleaned data, reduced from 0.793 by noise from uncleaned pseudo-skill telemetry.}
+\label{fig:leakage}
+\end{figure}
+
+\subsection{GRACE versus Baselines}
+
+Table~\ref{tab:headline} reports the primary chronological comparison.
+The leakage-free aggregate baseline reaches $R^{2}=0.444$ (MAE 13.49) with XGBoost and
+0.413 (MAE 13.91) with Random Forest on 407{,}968 held-out records
+(smaller than the GRACE test set because aggregate features require at least one prior observation;
+see Table~\ref{tab:sampleflow}).
+GRACE, with 70 features and an XGBoost + LightGBM ensemble, achieves $R^{2}=0.556$
+(MAE 11.72~pp; Table~\ref{tab:headline})---a gain of $+0.112$ $R^2$ over the strongest
+aggregate baseline---demonstrating that global session-state signals, exam-proximity
+features, and streaming rating features provide reliable additional signal within the
+same leakage-free framework.
+Accuracy rises steeply to 5--10 prior tests and saturates thereafter
+(Figure~\ref{fig:history}); the rating layer improves every history group
+(Table~\ref{tab:history}), with the largest absolute gains in long-history groups.
+
+\begin{table}[ht]
+\centering
+\caption{Point-prediction performance, chronological 70/10/20 hold-out.
+Baseline models use a 300{,}000-row sub-sample and 9 aggregate features.
+GRACE uses 70 features and an XGBoost + LightGBM ensemble.
+Paired-bootstrap $\Delta$MAE (GRACE $-$ XGBoost baseline, 407{,}968 matched rows):
+$-1.79$~pp (95\% CI $[-1.81,\;-1.77]$).
+Baseline and LSTM rows are reference points under different experimental conditions, not
+controlled model-family comparisons (see Section~\ref{sec:metrics}).}
+\label{tab:headline}
+\small
+\begin{tabular}{@{}lp{4.8cm}cc@{}}
+\toprule
+\textbf{Model} & \textbf{Feature set} & $R^{2}$ & \textbf{MAE (pp)} \\
+\midrule
+Random Forest$^\dagger$ & Aggregate stats (9 feat.) & 0.413 & 13.91 \\
+XGBoost$^\dagger$       & Aggregate stats (9 feat.) & 0.444 & 13.49 \\
+LSTM$^\ddagger$         & Rating sequences (8 feat.) & 0.230 & 16.59 \\
+\midrule
+\textbf{GRACE}           & \textbf{Rating state + EMA difficulty + inactivity gaps +} & \textbf{0.556} & \textbf{11.72} \\
+                        & \textbf{$\mathrm{RD}_{\text{skill}}$ + global state + session +} & & \\
+                        & \textbf{exam proximity + forgetting + velocity; XGB+LGB (70 feat.)} & & \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+{\footnotesize
+$^\dagger$ Chronological split; 300{,}000-row sub-sample; 9-feature aggregate set.
+$^\ddagger$ 1-layer LSTM, hidden 64; $\leq$200{,}000 sequences; 10 training epochs; 8 rating features.
+GRACE: XGB+LGB ensemble, $n_{\text{test}}=441{,}663$, $\alpha_{\text{XGB}}=0.15$.
+For the pre-audit exploratory result ($R^2=0.752$, leaky features, uncleaned data), see Table~\ref{tab:leakage}.
+For the controlled model-family comparison on identical features and data, see Table~\ref{tab:faircomp}.}
+\end{table}
+
+\paragraph{Training versus testing accuracy and generalization.}
+To verify that test-set accuracy is not driven by memorization,
+Table~\ref{tab:generalization} reports training and testing metrics for all models.
+Early stopping on a chronologically held-out calibration set (10\% of data)
+selects the boosting iteration count that maximizes validation performance.
+
+\begin{table}[ht]
+\centering
+\caption{Training versus testing accuracy and generalization gap.
+Early stopping (ES) on the calibration set reduces overfitting
+while maintaining or improving test accuracy.}
+\label{tab:generalization}
+\small
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{Model} & \textbf{Split} & $R^{2}$ & \textbf{MAE} & $n$ & \textbf{Gap} \\
+\midrule
+Random Forest & Train & 0.439 & 12.81 & 1,427,884 & \\
+ & Test & 0.413 & 13.91 & 407,968 & $+0.026$ \\
+\addlinespace
+XGBoost baseline (ES) & Train & 0.492 & 12.04 & 1,427,884 & \\
+ & Test & 0.429 & 13.54 & 407,968 & $+0.062$ \\
+\addlinespace
+\textbf{GRACE (ES, 70 feat.)} & Train & \textbf{0.573} & \textbf{11.4} & 1,545,819 & \\
+ & Test & \textbf{0.556} & \textbf{11.72} & 441,663 & \textbf{0.018} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Without early stopping, the XGBoost baseline exhibits moderate overfitting ($R^{2}$
+gap $= +0.126$); early stopping reduces this to $+0.062$.
+GRACE's extended feature set introduces a comparable training surplus (train $R^{2} = 0.573$,
+gap $+0.018$); Optuna-tuned LightGBM with temporal sample weights bounds this surplus,
+and rolling-origin validation ($R^{2} = 0.522 \pm 0.052$ across five annual windows)
+confirms that test-set performance is temporally stable and is not driven by
+period-specific memorization.
+
+\paragraph{Interpreting prediction accuracy.}
+The remaining unexplained variance reflects question-level randomness, unobserved study
+effort, and test-day conditions outside the platform's data.
+
+The gaps in Table~\ref{tab:headline} reflect combined differences in feature set,
+training size, and learning mechanism, not model family alone.
+RF and XGBoost baselines use 9 aggregate features and 300{,}000 training rows;
+GRACE uses 70 rating-augmented features and $\sim$1.5\,M rows.
+The LSTM uses 8 features, $\leq$200{,}000 sequences, and 10 epochs.
+
+\paragraph{Feature importance.}
+Figure~\ref{fig:featimp} shows the top-20 features by LightGBM split gain for GRACE.
+\begin{sloppypar}
+Skill-difficulty discrepancy features lead: \texttt{diff\_skill\_ema} (4.15\%),
+\texttt{diff\_ttype} (3.83\%), and \texttt{diff\_skill} (2.63\%) capture how demanding
+the current test was relative to the student's recent skill trajectory and platform-wide norms.
+\end{sloppypar}
+Test format (\texttt{ttype\_id}, 4.02\%) ranks second overall, reflecting the structural
+differences between UNT simulations, discipline quizzes, and standalone tests.
+The rating layer's expected score ($\hat{E}$, 2.58\%) places fifth; no single feature
+dominates (top entry 4.15\%), indicating a distributed correction function over
+difficulty context, test format, inactivity gaps, and temporal signals.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{fig_feature_importance.png}
+\caption{Top-20 GRACE features by LightGBM split gain.
+Colors indicate feature group: skill-difficulty discrepancy (purple),
+test format/type (teal), rating/IRT estimates (blue),
+rolling history (orange), temporal/context (green).
+Skill-difficulty discrepancy (\texttt{diff\_skill\_ema}, \texttt{diff\_ttype}) and
+test format (\texttt{ttype\_id}) lead; the rating layer's expected score ($\hat{E}$) places fifth.}
+\label{fig:featimp}
+\end{figure}
+
+\paragraph{Fair model comparison.}
+To isolate the contribution of model family, Table~\ref{tab:faircomp} holds the
+GRACE rating features, full training corpus ($\sim$1.5\,M rows), and chronological
+70/10/20 split identical across learners.
+XGBoost outperforms Random Forest by $\Delta R^{2} = +0.027$ (MAE $-0.42$~pp) and
+Ridge regression by $\Delta R^{2} = +0.055$ (MAE $-0.80$~pp)
+(Figure~\ref{fig:faircomp}, Table~\ref{tab:faircomp}).
+The gradient-boosting advantage is thus confirmed in a fully controlled setting:
+the nonlinear interaction structure of the rating features---particularly the interplay
+between ability ratings, difficulty, and inactivity gaps---can be fully exploited only by the sequential
+error-correction mechanism of boosted trees.
+Even the linear model (Ridge $R^{2}=0.489$) substantially outperforms the aggregate
+baseline ($R^{2}=0.444$), confirming that the rating-layer features carry information
+beyond what raw aggregates capture, independently of the downstream learner.
+
+\paragraph{Fair feature-set comparison.}
+To quantify the contribution of Groups C and D (global rolling, session, exam-proximity,
+forgetting-curve, and velocity features), a V2 baseline (46 features, XGBoost with fixed parameters, no Optuna tuning) is
+evaluated on the identical 441,663-row chronological test set.
+GRACE (70 features, $R^{2}=0.556$, MAE~11.72~pp) versus V2 baseline (46 features,
+$R^{2}=0.543$, MAE~11.88~pp): $\Delta R^{2}=+0.013$, $\Delta$MAE~$=-0.18$~pp.
+The gain is modest in absolute terms but consistent: the V2 baseline is also evaluated
+per rolling-origin fold (Table~\ref{tab:rolling}), where GRACE leads in 4 of 5 folds.
+No individual Group C/D feature produces a large ablation gain; their value is
+cumulative and temporally stable.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.7\textwidth]{fig_fair_comparison.png}
+\caption{Controlled model-family comparison on identical GRACE rating features,
+training data, and split.
+Error bars show 95\% bootstrap confidence intervals on $R^{2}$.
+XGBoost outperforms Random Forest by $+0.027$ and Ridge by $+0.055$ $R^{2}$.}
+\label{fig:faircomp}
+\end{figure}
+
+\begin{table}[ht]
+\centering
+\caption{Controlled model-family comparison.
+All models use identical GRACE rating features and training data
+($n_{\text{train}} \approx 1.5$\,M) with the same chronological 70/10/20 split.
+Differences are attributable to learning mechanism only.
+Note: the full GRACE system uses an XGBoost + LightGBM ensemble ($R^{2}=0.556$,
+Table~\ref{tab:headline}); this table isolates the XGBoost-only contribution to
+quantify the learning-mechanism effect independently of ensembling.}
+\label{tab:faircomp}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Model} & \textbf{Learning mechanism} & $R^{2}$ & \textbf{MAE (pp)} \\
+\midrule
+Ridge regression           & Linear, L2 regularized     & 0.489 & 12.66 \\
+Random Forest (500 trees)  & Bagging, independent trees & 0.517 & 12.28 \\
+\textbf{XGBoost (GRACE features)$^{\dagger}$} & \textbf{Gradient boosting} & \textbf{0.544} & \textbf{11.86} \\
+\multicolumn{4}{@{}l@{}}{\footnotesize $^{\dagger}$Single learner; full GRACE ensemble (XGBoost + LightGBM) achieves $R^{2}=0.556$ (Table~\ref{tab:headline}).} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Key driver: EMA skill-difficulty residual.}
+A component-isolation analysis reveals that the EMA skill-difficulty residual $\hat{E}$
+is the primary driver of the Group B extension (which also includes inactivity gap
+features and skill-level rolling windows; combined $+0.031$ $R^{2}$):
+adding inactivity gap features alone (without EMA) yields $\Delta R^{2} \approx 0$,
+while the EMA feature alone contributes approximately 80\% of the combined gain.
+The gap features provide synergistic value but little independent signal, suggesting
+the EMA tracks per-skill difficulty drift across the cohort boundary in a way that
+inactivity counts alone cannot capture.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.85\textwidth]{fig5_history_depth.png}
+\caption{Prediction quality versus per-student history depth in discipline.
+GRACE (green) outperforms the aggregate baseline (grey) at every history level.}
+\label{fig:history}
+\end{figure}
+
+\begin{table}[ht]
+\centering
+\caption{Per-group comparison on test records.  GRACE improves every history stratum.}
+\label{tab:history}
+\begin{tabular}{lrcccc}
+\toprule
+\textbf{Prior tests} & $n$ & \textbf{GRACE} $R^{2}$ & \textbf{Baseline} $R^{2}$ &
+\textbf{GRACE MAE} & \textbf{Base MAE} \\
+\midrule
+1--4   &  69,509 & 0.518 & 0.369 & 12.25 & 14.17 \\
+5--10  &  99,962 & 0.554 & 0.423 & 11.56 & 13.35 \\
+11--20 & 131,375 & 0.571 & 0.440 & 11.51 & 13.40 \\
+$>$20  & 121,948 & 0.584 & 0.445 & 11.23 & 13.31 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Four behavioral regularities are visible in the corpus (Figure~\ref{fig:behavioral}).
+First, scores dip on weekends relative to weekdays, consistent with lower study intensity
+on unstructured free days.
+Second, within-session fatigue is pronounced: mean score falls by 6.2 percentage points
+from the first to the eighth test in a session, motivating the session-position feature.
+Third, exam proximity produces a measurable score improvement: students score up to
+12~pp above off-season levels in the months before the June UNT date, motivating
+the days-to-exam feature (Group C, Table~\ref{tab:features}).
+Fourth, inactivity degrades performance: mean score at return falls 12.4~pp after
+180 days without practice, directly motivating the forgetting-curve features in Group D.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig9_behavioral.png}
+\caption{Behavioral regularities. (a) Day-of-week score patterns: mean scores dip on
+weekends relative to weekdays. (b) Within-session fatigue: mean score drops 6.2~pp from
+the first to the eighth consecutive test in a session. (c) Exam-proximity effect: score
+improvement versus off-season peaks close to the June UNT date.
+(d) Inactivity-gap decay: mean score at return falls 12.4~pp after 180 days of absence.}
+\label{fig:behavioral}
+\end{figure}
+
+\subsection{Temporal Stability}
+
+Table~\ref{tab:rolling} reports out-of-time performance across five expanding annual windows.
+GRACE averaged $R^{2}=0.522 \pm 0.052$
+versus $0.288 \pm 0.151$ for the aggregate baseline and $0.511 \pm 0.053$ for the
+V2 baseline (46 features, same fold, fixed XGBoost params); GRACE led in every fold
+against the aggregate baseline, and in 4 folds and tied in 1 against the V2 baseline.
+The large gap vs.\ the aggregate baseline ($\Delta R^{2}=+0.234$) arises mainly from
+features that aggregate statistics cannot represent: per-student rating state,
+EMA skill difficulty, and inactivity gaps.
+Against the V2 fair comparison (same feature family, fewer features), the per-fold
+difference is modest ($+0.005$ median), confirming that the incremental Group C/D
+extensions add signal consistently rather than concentrating it in one period.
+
+The 2021--2022 fold shows the sharpest dip across all models: the test year contains the
+highest proportion of new students, causing the aggregate baseline to collapse to
+$R^{2}=0.048$ while the V2 baseline holds at $R^{2}=0.437$ and GRACE at $R^{2}=0.437$.
+The fold-specific stability ratio $R^{2}_{\text{GRACE}}/R^{2}_{\text{Agg.\ base}}$
+reaches 9.1 in 2022 (0.437/0.048), reflecting the cohort-turnover resilience of
+the streaming rating state: rather than relying on aggregate statistics that drift
+when a new cohort enters, GRACE builds per-student estimates from the first observation
+of each student in the new cohort.
+
+\begin{table}[ht]
+\centering
+\caption{Rolling-origin temporal validation with expanding training windows.
+GRACE uses 70 features with fold-local static content norms; XGBoost only (fixed params)
+per fold; ensemble ($\alpha_{\text{XGB}}=0.15$) applied to the headline result only.
+$^\dagger$Aggregate baseline (9 features; first-attempt rows dropped).
+$^\ddagger$V2 baseline (46 features, XGBoost fixed params, same fold as GRACE; no Optuna).}
+\label{tab:rolling}
+\small
+\begin{tabular}{@{}lrrccc@{}}
+\toprule
+\textbf{Fold} & \textbf{Train} $n$ & \textbf{Test} $n$ &
+\textbf{GRACE} $R^{2}$ &
+\textbf{Agg.\ Base}$^\dagger$ & \textbf{V2 Base}$^\ddagger$ \\
+\midrule
+2018--20$\to$21 & 269,172   & 132,887 & 0.549 & 0.295 & 0.545 \\
+2018--21$\to$22 & 388,771   & 277,933 & 0.437 & 0.048 & 0.437 \\
+2018--22$\to$23 & 638,910   & 419,808 & 0.487 & 0.273 & 0.458 \\
+2018--23$\to$24 & 1,016,738 & 638,492 & 0.572 & 0.384 & 0.570 \\
+2018--24$\to$25 & 1,591,380 & 440,112 & 0.565 & 0.441 & 0.542 \\
+\midrule
+Mean $\pm$ SD & --- & --- &
+$\bm{0.522 \pm 0.052}$ &
+$0.288 \pm 0.151$ & $0.511 \pm 0.053$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Component Analysis and Score Ranges}
+
+\textit{Ablation.}\quad
+Table~\ref{tab:ablation} and Figure~\ref{fig:ablation} isolate each component using
+an 80/20 chronological split without a reserved calibration partition
+(reference $R^{2} = 0.519$; the lower value compared with the headline 0.556 reflects
+the larger effective training set under this two-way partition).
+The inactivity gap ($\Delta R^{2} = -0.008$) and RD time decay ($-0.006$) produce the
+largest single-component drops; surprise ($-0.004$) and aggregate supplement ($-0.005$)
+follow.
+Removing the entire rating layer in favor of aggregates alone costs $-0.076$ $R^{2}$
+(Table~\ref{tab:headline}), confirming the layer's collective contribution.
+The small point-prediction contribution of rating-deviation features should not be
+mistaken for overall unimportance: the RD state is the sole basis for the per-group
+conformal width adjustment that distinguishes cold-start from well-measured students,
+and removing it from the Mondrian grouping substantially degrades per-stratum coverage uniformity.
+
+\begin{table}[ht]
+\centering
+\caption{Rating-layer ablation (80/20 chronological split).}
+\label{tab:ablation}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Component removed} & $R^{2}$ & $\Delta R^{2}$ \textbf{vs full} & \textbf{MAE (pp)} \\
+\midrule
+--- none: full model (reference) & 0.519 & --- & 12.24 \\
+$-$ rating-deviation features & 0.519 & $+0.001$ & 12.23 \\
+$-$ skill-level ability & 0.519 & $+0.000$ & 12.24 \\
+$-$ surprise history & 0.515 & $-0.004$ & 12.32 \\
+$-$ inactivity gap & 0.510 & $-0.008$ & 12.36 \\
+$-$ aggregate supplement & 0.514 & $-0.005$ & 12.33 \\
+$-$ RD time decay ($c=0$) & 0.513 & $-0.006$ & 12.36 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{fig7_ablation.png}
+\caption{Change in $R^{2}$ when individual rating-layer components are removed
+(80/20 chronological split; reference model $R^{2}=0.519$).
+Green bars indicate removal has negligible or slightly positive effect;
+red bars indicate degradation.
+The inactivity gap and RD time-decay produce the largest individual drops.}
+\label{fig:ablation}
+\end{figure}
+
+\textit{Score ranges.}\quad
+Asymmetric conformal quantile regression with LightGBM 3rd/97th percentile heads
+and fine-grained Mondrian stratification (three rating-deviation bands) contained the
+true score for 0.886 of all test attempts
+(Wilson 95\% CI: [0.885, 0.887]), with mean width
+48.0~pp (Table~\ref{tab:coverage}, Figure~\ref{fig:coverage}).
+Coverage is consistent across RD strata (range: 0.880--0.891).
+Students with high rating deviation (cold-start) receive wider intervals (49.7~pp) than
+well-measured students (low RD: 45.9~pp), converting rating uncertainty
+into explicit width rather than suppressed predictions.
+A non-stratified marginal conformal baseline achieves 0.897 overall
+coverage (0.3~pp below the 90\% nominal target). The Mondrian
+RD-stratified design achieves 0.886 overall (1.4~pp below)---both
+near-nominal---but provides width adaptation (45.9--49.9~pp by RD band)
+that the flat marginal baseline cannot: high-RD students receive wider
+intervals (49.7~pp) while well-measured students receive narrower ones
+(45.9~pp), converting per-student uncertainty into explicit coverage width
+rather than uniform suppression.
+
+The mean width of 48.0~pp is comparable to the symmetric-Gaussian reference
+of 51.9~pp ($2 \times 1.645 \times 15.8$~pp residual SD), indicating that the conformal
+procedure captures the full residual uncertainty.
+Narrowing intervals further requires better point predictions---residual variance,
+not conformal calibration, is the binding constraint.
+Figure~\ref{fig:reliability} shows the full reliability diagram; Figure~\ref{fig:intervalcomp} compares overall coverage and width between the two calibration variants; Figure~\ref{fig:coverage} breaks down coverage and width by RD band.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.55\textwidth]{fig_reliability_diagram.png}
+\caption{Reliability diagram: nominal vs.\ empirical coverage across $\alpha$ levels.
+Asymmetric CQR tracks the ideal diagonal (dashed) closely across the full range;
+empirical coverage at the 90\% nominal target is 0.886.}
+\label{fig:reliability}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig_interval_comparison.png}
+\caption{Overall conformal coverage and mean interval width: Mondrian CQR versus
+Asymmetric CQR.
+Left: both methods achieve approximately 0.886--0.888 empirical coverage
+(dashed line).
+Right: mean interval width; the dotted reference marks the symmetric-Gaussian baseline
+(51.9~pp); both methods produce overall width of approximately 47--48~pp.}
+\label{fig:intervalcomp}
+\end{figure}
+
+\begin{table}[ht]
+\centering
+\caption{Score-range coverage and mean width by rating-deviation (RD) band (90\% target).
+Wilson 95\% CIs on coverage.
+Asymmetric CQR with 3rd/97th-percentile quantile heads.}
+\label{tab:coverage}
+\begin{tabular}{lrccc}
+\toprule
+\textbf{RD band} & $n$ & \textbf{Coverage} & \textbf{95\% CI} & \textbf{Mean width (pp)} \\
+\midrule
+Low RD (well-measured)  & 198{,}452 & 0.884 & [0.883,\ 0.886] & 45.9 \\
+Mid RD                  & 164{,}539 & 0.891 & [0.889,\ 0.892] & 49.9 \\
+High RD (cold-start)    &  78{,}672 & 0.880 & [0.877,\ 0.882] & 49.7 \\
+\addlinespace
+All attempts            & 441{,}663 & \textbf{0.886} & [0.885,\ 0.887] & 48.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig8_score_ranges.png}
+\caption{Conformal score-range validity by RD band.
+(a)~Empirical coverage per band; all three RD bands are consistent around the 90\% nominal target (dashed line).
+(b)~Mean interval width per band; the horizontal reference line marks the overall mean of
+48.0~pp; students with high rating deviation (cold-start) receive wider intervals (49.7~pp) than
+well-measured students (low RD: 45.9~pp), reflecting genuine uncertainty reduction
+with repeated assessment.}
+\label{fig:coverage}
+\end{figure}
+
+%% ===================================================================
+\section{Discussion}
+%% ===================================================================
+
+\subsection{Why the Rating Layer Helps---and Why Model Choice Matters}
+
+The rating layer replaces static per-student sample statistics with recursively updated
+estimates calibrated against a shared content-difficulty scale.
+A student's ability estimate is thus informed not only by their own scores but also by
+how difficult the assessed content is relative to the broader cohort---a signal that
+raw percentage averages cannot provide.
+This advantage is especially pronounced under out-of-time evaluation (Section~4.3):
+GRACE outperformed the aggregate baseline by $+0.124$ to $+0.389$ $R^{2}$ across
+five annual folds, with the largest gains in years with high cohort turnover.
+In 2022, for instance, the aggregate baseline collapsed to $R^{2} = 0.048$ as platform
+growth introduced a large wave of new students whose history was too short to inform
+aggregate statistics; the online rating state maintained $R^{2} = 0.437$
+(9.1$\times$ stability ratio) because ability estimates initialize at the cohort mean
+and update from the first attempt onward.
+
+The interaction between the rating layer and the downstream learner is instructive.
+Gradient boosting is well suited to the rating features because the trees can learn
+nonlinear correction functions that exploit interactions among ability ratings, difficulty,
+inactivity gaps, and calendar signals simultaneously.
+Feature importance (Figure~\ref{fig:featimp}) shows no single dominant feature: the top
+entry (\texttt{diff\_skill\_ema}, 4.15\%) captures skill-difficulty discrepancy, suggesting
+the LightGBM core learns corrections along multiple axes---difficulty context, test format,
+and temporal patterns---rather than acting as a single-axis corrector.
+
+The RF and LSTM baselines (Section~4.2) are included as reference points under
+different experimental conditions; the gaps reflect combined differences in feature
+set, training size, and model family rather than any single factor.
+Rolling-origin validation confirms temporal stability ($R^{2} = 0.522 \pm 0.052$,
+Table~\ref{tab:rolling}), demonstrating that test-set performance is not driven by
+period-specific memorization.
+
+The saturation of prediction quality beyond approximately ten prior tests
+(Figure~\ref{fig:history}) reflects two converging mechanisms.
+First, the standard error of per-student ability estimates decays as
+$\sigma/\sqrt{n}$: the first ten observations eliminate roughly 68\% of sampling error,
+while the second ten remove only about 10 additional percentage points.
+Second, skill acquisition follows the power law of practice~\cite{newell1981}---reflected
+here in the concave score-gain curve over twenty attempts---so early assessments carry
+disproportionate information about a student's trajectory.
+GRACE achieves $R^{2} = 0.518$ for students with only 1--4 prior tests,
+a regime in which aggregate history methods have almost no predictive signal.
+
+\subsection{Contextualizing the Accuracy Level}
+
+The $R^{2}$ of 0.556 under chronological evaluation must be contextualized against
+claims of 90--99\% accuracy that appear in the EDM literature.
+
+\textit{First, most high-accuracy benchmarks use classification, not regression.}\quad
+Studies reporting 90--99\% accuracy predict binary outcomes on class-imbalanced data,
+where a majority-class classifier reproduces the headline rate by construction.
+Continuous score prediction is evaluated by $R^{2}$ and MAE, which are not directly comparable
+to classification accuracy.
+
+\textit{Second, reported regression $R^{2}$ values depend critically on evaluation protocol.}\quad
+The leakage audit (Section~4.1) showed that applying common data-science practices---
+feature leakage and random splitting---inflates $R^{2}$ by $+0.349$ on this dataset.
+The same XGBoost model yielded $R^{2} = 0.752$ under flawed evaluation but only
+$R^{2} = 0.444$ under correct chronological evaluation.
+Studies reporting $R^{2} > 0.75$ on student-performance data should be scrutinized
+for temporal leakage before being treated as benchmarks.
+
+\textit{Third, GRACE compares favorably with prior leakage-free EDM results.}\quad
+Systematic reviews report $R^{2}$ values of 0.30--0.55 for student-performance
+regression on institutional datasets under honest evaluation protocols, with MAE
+typically in the 10--15~pp range on percentage scales~\cite{romero2020,hellas2018}.
+Yagci~\cite{yagci2022} reported 70--75\% accuracy ($\approx$1,850 students) with
+random cross-validation; Cortez and Silva~\cite{cortez2008} obtained $R^{2} \approx 0.20$
+on 649 students.
+GRACE's $R^{2} = 0.556$ (MAE 11.72~pp) on 441{,}663 chronologically held-out records
+is at the upper end of this range, on a dataset two to three orders of magnitude larger.
+
+\textit{Fourth, the accuracy approaches an empirical reference ceiling.}\quad
+Under simplifying assumptions (additive variance decomposition), the within-group
+score variability yields an empirical reference ceiling of $R^{2} \approx 0.58$.
+GRACE ($R^{2}=0.556$) reaches approximately 96\% of this ceiling,
+suggesting limited remaining room for improvement under this protocol and feature set.
+Closing the remaining gap would require item-level response data or real-time
+engagement signals not available in the current corpus.
+
+\textit{Fifth, predictability varies fundamentally across disciplines.}\quad
+The per-discipline analysis (Figure~\ref{fig:discr2}) reveals that $R^{2}$
+varies from 0.235 (Math Literacy) to 0.639 (full UNT simulations), with
+History of Kazakhstan at 0.311 and English at 0.485.
+Integrative assessments spanning broad topic areas (UNT simulations, Mathematics)
+are more predictable than narrow single-topic quizzes (Math Literacy, Algebra),
+consistent with multi-topic breadth averaging out question-level randomness---where a
+single difficult question can dominate the score in a short quiz.
+The aggregate $R^{2} = 0.556$ is a weighted average over these fundamentally different
+prediction tasks, and the variability it obscures motivates the per-discipline breakdown
+in Figure~\ref{fig:discr2}.
+
+\textit{Sixth, the model achieves useful accuracy even with minimal data.}\quad
+GRACE attains $R^{2} = 0.518$ for students with only 1--4 prior tests
+(Table~\ref{tab:history}), where aggregate methods have minimal signal.
+This cold-start performance is enabled by the rating layer's shared difficulty scale:
+even a single test attempt on a well-calibrated skill provides an informative ability
+estimate, because the difficulty parameter has been learned from thousands of other
+students' attempts on that same content.
+
+Per-student evaluation ($n = 12{,}226$ students with $\ge$3 attempts) yields a median
+within-student $R^{2}$ of 0.346, with 79.2\% of students showing positive $R^{2}$.
+Students with negative $R^{2}$ (20.3\%) have significantly fewer observations
+(median 12 attempts vs.\ 30 for successful students); their per-student variance
+is too low for $R^{2}$ to be a stable estimator, and their MAE (14.7~pp) is only
+modestly higher than the successful-student MAE (11.8~pp).
+
+\paragraph{Baseline robustness check.}
+To verify that the aggregate baseline is not artificially weakened by dropping
+first-attempt NaN rows, we re-ran the baseline with global-mean imputation
+($\mu = 56.1$) for missing aggregate features.
+The imputed baseline attains $R^{2} = 0.413$ (MAE 13.73) on 445{,}489 test rows---lower
+than the NaN-dropped baseline ($R^{2} = 0.444$, MAE 13.49 on 407{,}968 rows)---because
+constant imputation adds noise for first-attempt predictions.
+GRACE's advantage over the imputed baseline is $\Delta$MAE $= -1.26$~pp,
+comparable to the headline $-1.79$~pp, confirming that the comparison
+is robust to baseline specification.
+
+\paragraph{Calibration and regression-to-the-mean bias.}
+Stratifying test-set predictions by true-score decile reveals the expected
+regression-to-the-mean pattern: the lowest-scoring decile (10--26\%) is over-predicted
+by $+20.6$~pp, and the highest (90--100\%) is under-predicted by $-19.1$~pp.
+However, the overall calibration slope (predicted vs.\ actual linear fit) is
+0.983 with intercept 1.4~pp---near the ideal $(1.0,\, 0.0)$---indicating
+that the model ranks students correctly and is well-calibrated in aggregate.
+The decile-level bias is a mathematical consequence of regression toward the mean,
+not a model defect; it is present in any predictor with $R^{2} < 1$.
+Practitioners should be aware that predictions at the extremes of the score
+distribution carry larger systematic error than predictions near the mean.
+Post-hoc isotonic calibration yields a negligible
+improvement ($\Delta$MAE~$= -0.05$~pp) and does not reduce the extreme-decile bias.
+
+For cold-start students ($n_{\text{disc}} < 5$), blending GRACE predictions with
+discipline-level population means degrades \emph{per-student} $R^{2}$ ($0.403 \to 0.268$;
+MAE: $13.86 \to 16.43$~pp in this sub-group), demonstrating that the rating layer already
+initializes cold-start estimates more informatively than population averages.
+(Note: the main per-attempt result for 1--4 prior tests is $R^{2}=0.518$;
+Table~\ref{tab:history}; the per-student metric is lower because individual trajectories
+are short and highly variable.)
+Evaluation of nine post-hoc strategies on the full corpus
+(Section~5.6) confirms this finding: none improved point-prediction accuracy,
+because the streaming rating state already encodes the systematic variation these
+calibrations target.
+
+The ablation (Table~\ref{tab:ablation}) shows small individual deltas ($\le$0.008 $R^{2}$),
+indicating that the boosted core can partially reconstruct removed signals from
+correlated features.  Removing the entire rating layer costs $-0.076$ $R^{2}$,
+confirming its collective contribution.
+
+\subsection{Score Ranges}
+
+Conformal score ranges communicate \emph{how much to trust} the point prediction,
+not just what the prediction is.
+The Mondrian design achieves this by coupling interval width to the RD state:
+a student the platform knows little about (high RD) receives a wide range;
+a well-measured student receives a narrow one.
+The non-stratified marginal baseline fails the 90\% nominal guarantee (0.897) and
+provides no width signal about measurement confidence, whereas the Mondrian
+stratification achieves 0.886 overall empirical coverage with consistent RD-stratum calibration (0.880--0.891).
+The deployed variant is Asymmetric CQR with Mondrian stratification;
+a non-stratified Asymmetric CQR variant shown in Figure~\ref{fig:intervalcomp}
+achieves identical aggregate results but without per-stratum calibration.
+Mean interval width is already at the conformal efficiency limit (48.0~pp versus the
+Gaussian residual reference of 51.9~pp), so further narrowing requires reducing
+residual variance through better point predictions, not changing the calibration procedure.
+
+\subsection{Practical Implications}
+
+\textit{For educators.}\quad
+GRACE provides each student with a continuously updated skill passport: ability and
+uncertainty estimates per discipline, updated after every assessment without manual
+intervention.
+Score-range width translates directly into a communicable uncertainty signal---a teacher
+seeing ``predicted 62, range 54--70'' versus ``predicted 62, range 43--81'' receives a
+concrete recommendation about how much weight to place on the prediction.
+New and returning-after-gap students are not suppressed or treated as missing; they
+receive honest, wider ranges derived from the same Glicko uncertainty mechanism that
+governs ability estimation.
+Figures~\ref{fig:playercards} and~\ref{fig:skillpassport} illustrate how GRACE output
+can be surfaced through student-facing interfaces.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig_player_cards.pdf}
+\caption{GRACE output as student player cards (demo data; names are illustrative samples
+not associated with any real individuals).
+Each card shows the predicted UNT score with 90\% score range, per-discipline ability
+on a radar chart, and a confidence indicator derived from the Glicko rating deviation.
+Cold-start students (e.g., Daniyar K., Silver tier) receive visibly wider score ranges
+than long-history students (Aigerim S., Gold tier), directly communicating prediction
+uncertainty through interval width.}
+\label{fig:playercards}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig_skill_passport.pdf}
+\caption{GRACE output as an interactive skill passport (demo data; names are illustrative
+samples not associated with any real individuals).
+The dashboard shows per-discipline predicted scores with 90\% confidence ranges,
+Glicko rating level and trend, engagement statistics (tests taken, streak, days to UNT),
+and a UNT composite forecast with uncertainty band (72\%, range 59--84\%).
+Discipline-level confidence bars translate rating deviation directly into a signal
+educators can act on without statistical training.}
+\label{fig:skillpassport}
+\end{figure}
+
+\textit{For platform operators.}\quad
+GRACE's deployment footprint is two components: a constant-time online rating table
+and a periodically refit gradient-boosted core.
+Although no single feature dominates (top entry \texttt{diff\_skill\_ema} at 4.15\%
+split gain), the streaming layer's difficulty discrepancy signals and expected-score
+estimate ($\hat{E}$) collectively constitute the highest-importance feature group,
+and the rating table can be updated continuously without retraining the boosted core.
+The rolling-origin results (Table~\ref{tab:rolling}) suggest that annual retraining
+suffices under stable platform growth; the 2022 fold---where new-student influx
+most stressed the aggregate baseline---demonstrates that the rating layer adapts
+without retraining.
+Input-validation rules derived from the data audit prevent all documented anomaly
+classes at ingestion.
+
+\textit{For researchers.}\quad
+The released pipeline provides an end-to-end leakage-audited evaluation protocol
+applicable to any longitudinal test-log dataset.
+The factorial audit design---clean vs.\ leaky features crossed with chronological
+vs.\ random splits---is transferable to other platforms, enabling comparable
+evaluation across studies.
+
+\subsection{Limitations}
+
+\textit{Demographic gaps.}\quad
+Demographic covariates (gender, region, school type) are largely absent from the corpus,
+precluding fairness audits---important given documented urban--rural disparities in
+UNT outcomes~\cite{oecd2017}.
+Even the available admission-status labels cover only $\approx$2.5\% of students
+and are subject to selective self-reporting (Section~3.1).
+Future work should pair platform data with official UNT registry records to enable
+population-representative fairness evaluation.
+
+\textit{Single platform.}\quad
+The corpus originates from one private preparation platform whose user population
+skews toward students with access to paid services and with sufficient engagement to
+generate multi-year records.
+Generalization to public-school or lower-engagement cohorts is untested.
+
+\begin{sloppypar}
+\textit{Disciplines with limited improvement.}\quad
+Per-discipline analysis (Figure~\ref{fig:discr2}) identifies three subjects---Biology
+($\Delta R^{2} = -0.005$), Geography ($-0.028$), and History of Kazakhstan ($-0.012$)---where
+GRACE yields a small negative $\Delta R^{2}$ relative to the aggregate baseline.
+These disciplines share low per-student attempt volume and limited cross-session
+progression structure; the rating layer has insufficient interaction history to
+consistently outperform simple aggregate statistics in these subjects.
+Practitioners deploying GRACE should monitor per-discipline performance and apply
+discipline-specific fallback logic for low-volume subjects.
+\end{sloppypar}
+
+\textit{Model scope.}\quad
+Rating hyperparameters were tuned on the 2018--2020 window and frozen---a
+conservative choice that prioritizes honest evaluation.
+GRACE introduces proper per-skill Glicko uncertainty ($\mathrm{RD}_{\text{skill}}$)
+and tunes LightGBM hyperparameters via Optuna, refining both the rating model and the
+downstream learner within the same leakage-free protocol.
+The LSTM comparison (Section~3.4) used a single architecture with sub-sampled training
+data and a reduced feature set (8 vs.\ 70 features); attention-based
+sequence models (e.g., SAINT+~\cite{shin2021}) trained on the full corpus with systematic
+hyperparameter search could narrow the gap, though their advantage concentrates in
+long-history regimes~\cite{liu2021}.
+
+\textit{Extreme-score bias.}\quad
+All regression models with $R^{2} < 1$ exhibit regression toward the mean: GRACE
+over-predicts low-scoring students by up to $+20.6$~pp and under-predicts
+high-scoring students by up to $-19.1$~pp.
+The aggregate calibration slope (0.983) is near-ideal, but practitioners using
+GRACE for at-risk identification should apply decile-level bias corrections or rely
+on the prediction \textit{rank} rather than the raw value at distribution tails.
+
+\textit{Score-range coverage.}\quad
+Empirical coverage reaches 0.886 overall, slightly below the 90\% nominal target, with
+consistent coverage across RD bands (0.880--0.891).
+This slight under-coverage (0.014 below nominal) arises because the exchangeability
+assumption of split conformal prediction is mildly violated by the chronological
+train/calibration/test split; future work could apply online or adaptive conformal methods
+designed for temporal distribution shift~\cite{gibbs2021,zaffran2022}.
+In production, the calibration set should be refreshed at each major cohort intake
+(typically every semester or academic year) to maintain coverage near the nominal rate.
+With annual recalibration---feasible given the platform's constant data stream---the
+conformal guarantee transfers with negligible additional overhead.
+
+\textit{Item-level data gap.}\quad
+The corpus records only test-level aggregated scores, not per-question
+correct/incorrect responses.
+Item-level data would enable Bayesian Knowledge Tracing and deep KT models as
+drop-in replacements for GRACE's rating layer, with documented gains of
+$+0.10$--$0.15$ $R^{2}$ in comparable settings~\cite{romero2020,hellas2018}.
+Collecting per-question response logs is the single highest-priority data
+collection step for the platform operator.
+
+\subsection{Pathways to Stronger Predictions}
+
+The honest $R^{2}$ of 0.556 and mean interval width of 48.0~pp reflect the information
+content of test-level aggregates, not a ceiling imposed by the GRACE architecture.
+Three tiers of improvement are ranked by expected impact.
+
+\textit{Tier 1: Richer input data.}\quad
+Item-level response data (correct/incorrect per question) and engagement signals
+(time-on-task, hint usage, video completion) have produced $+0.10$--$0.15$ $R^{2}$
+gains in prior work~\cite{romero2020,hellas2018}.
+On the present platform, collecting per-question response logs would directly enable
+Bayesian Knowledge Tracing~\cite{corbett1994} and deep KT
+models~\cite{shin2021,ghosh2020,liu2023simplekt} as principled layer-1 replacements,
+while simultaneously tightening interval widths through reduced residual variance.
+
+\textit{Tier 2: Model engineering within existing data.}\quad
+GRACE addresses this tier directly: an XGBoost + LightGBM ensemble with Optuna-tuned
+LightGBM, per-skill rating deviation tracking, static content difficulty norms, student
+platform context features, global cross-discipline session-state features, exam-proximity
+signals, forgetting curves, score velocity, and nonlinear ability signals constitute the 70-feature design.
+
+\textit{Tier 3: Architecture evolution.}\quad
+Attention-based knowledge-tracing models (e.g., SAINT+~\cite{shin2021}) adapted
+to continuous-score regression could be evaluated under the same leakage-free protocol
+once per-question response data are available.
+Their advantage concentrates in long-history regimes~\cite{liu2021}; the rolling-origin
+framework established here provides a ready evaluation harness.
+
+Because the conformal interval width (48.0~pp) is comparable to the Gaussian
+reference (51.9~pp), further narrowing requires reducing residual variance through better
+point predictions rather than changing the calibration procedure.
+
+\paragraph{On the sufficiency of the rating state.}
+Systematic experiments testing nine post-hoc calibration and augmentation strategies---cold-start
+prior blending, quantile-stratified isotonic calibration, per-student linear correction,
+recency weighting, score-band auxiliary features, Platt scaling, beta calibration,
+histogram binning, and temperature scaling (full per-strategy results in the code repository)---found that none
+improved point-prediction accuracy on the full 2.2-million-record corpus.
+This negative result is informative: the GRACE rating state ($\theta_{\text{global}}$,
+$\theta_{\text{disc}}$, $\theta_{\text{skill}}$, and their deviations) already encodes
+the per-student systematic variation that post-hoc calibrations attempt to recover.
+Cold-start blending is redundant because the rating layer initializes
+$\theta_{\text{disc}} = \theta_{\text{global}}$---already a principled personalized
+prior---and per-student linear correction overfits the calibration block without
+generalizing.
+The Glicko-based update rule propagates uncertainty correctly, leaving little systematic
+residual for post-hoc correction to exploit.
+
+\paragraph{Residual structure and per-discipline predictability.}
+Figure~\ref{fig:residuals} shows the GRACE residual distribution:
+the upper tail is larger than the lower, indicating that over-prediction of
+struggling students is the primary remaining error mode.
+The regression-to-the-mean bias curve (Figure~\ref{fig:residuals}, right panel)
+shows that GRACE's systematic bias is near-ideal across score deciles,
+with modest over-prediction at the low end and slight under-prediction at
+the high end---a pattern consistent with Bayesian shrinkage in the rating layer.
+
+Per-discipline analysis (Figure~\ref{fig:discr2}) reveals substantial variation
+($R^{2}$ from 0.235 for Math Literacy to 0.639 for UNT simulations), with the largest
+gains over the V2 baseline in English (+0.023), Physics (+0.023), Russian (+0.021),
+and Logic (+0.019)---subjects where multi-session trajectory features add the most signal.
+Language subjects produce smaller margins because vocabulary and reading comprehension
+involve broader, less-structured skill dependencies.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig_residual_distribution.png}
+\caption{GRACE residual distribution.
+Left: residual density; the upper tail exceeds the lower, indicating
+over-prediction of struggling students as the primary error mode.
+Right: mean bias (predicted $-$ actual) by true-score decile; near-ideal
+aggregate calibration with modest regression-to-the-mean tendency at extremes.}
+\label{fig:residuals}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig_per_discipline_r2.png}
+\caption{Per-discipline $R^{2}$ for GRACE.
+Disciplines sorted by performance; all disciplines with $n \ge 200$
+test records shown.
+Gains over the aggregate baseline are largest where per-skill difficulty
+trends are most informative (Mathematics, Logic).}
+\label{fig:discr2}
+\end{figure}
+
+%% ===================================================================
+\section{Conclusion}
+%% ===================================================================
+
+GRACE---a streaming Glicko-based rating layer feeding an XGBoost + LightGBM ensemble
+with uncertainty-adjusted conformal score ranges---achieves $R^{2}=0.556$ (MAE 11.72~pp)
+on 2.2 million practice-test records from 55{,}482 students, versus $R^{2}=0.444$ for the
+leakage-free aggregate baseline ($\Delta$MAE $-1.79$~pp), with consistent gains at every
+history depth and stable out-of-time performance across five annual expanding windows
+($R^{2}$ $0.522 \pm 0.052$ vs.\ $0.288 \pm 0.151$ for the baseline).
+
+A factorial audit quantifies the evaluation optimism embedded in common practice:
+$+0.349$ $R^{2}$ attributable to feature leakage and random splitting combined.
+The same XGBoost model achieved $R^{2}=0.752$ under a flawed protocol and $R^{2}=0.444$
+under a leakage-free chronological one---a gap that substantially exceeds the GRACE improvement,
+underscoring the need for rigorous evaluation reporting in this field.
+
+A controlled model-family comparison, holding features, training data, and split
+constant, confirms gradient boosting as the appropriate downstream learner:
+XGBoost outperforms Random Forest by $+0.027$ $R^{2}$ and Ridge regression by
+$+0.055$ $R^{2}$ on identical rating features and training data.
+Asymmetric conformal intervals closely approach the 90\% nominal coverage target
+(0.886 empirical, mean width 48.0~pp; 1.4~pp below nominal).
+Systematic experiments with nine post-hoc calibration strategies (detailed in Section~5.1)
+found no point-accuracy improvement, indicating that the Glicko rating state already encodes
+the per-student systematic variation these corrections attempt to recover.
+
+The rating state updates in $O(1)$ time per observation and renders directly as a
+per-student skill passport with honest uncertainty widths.
+Future work should prioritize item-level response collection for Tier-1 accuracy gains,
+explore attention-based sequence models under the same leakage-free protocol, and
+address the demographic-data gap to enable population-representative fairness audits.
+
+%% ===================================================================
+\begin{thebibliography}{44}
+%% ===================================================================
+
+\bibitem{romero2020}
+Romero, C., \& Ventura, S. (2020). Educational data mining and learning analytics: An
+updated survey. \textit{WIREs Data Mining and Knowledge Discovery}, 10(3), e1355.
+
+\bibitem{zhang2021}
+Zhang, Y., Yun, Y., An, R., Cui, J., Dai, H., \& Shang, X. (2021). Educational data
+mining techniques for student performance prediction. \textit{Frontiers in Psychology}, 12,
+698490.
+
+\bibitem{baashar2021}
+Baashar, Y., et al. (2021). Predicting student's performance using machine learning
+methods: A systematic literature review. \textit{ICCOINS 2021}, IEEE.
+
+\bibitem{aldin2024}
+Al-Din, M. S. N., \& Al Abdulqader, H. A. (2024). Students' academic performance
+prediction using EDM and ML: A systematic review. \textit{IJRISS}, 8(8).
+
+\bibitem{kapoor2023}
+Kapoor, S., \& Narayanan, A. (2023). Leakage and the reproducibility crisis in ML-based
+science. \textit{Patterns}, 4(9), 100804.
+
+\bibitem{tashman2000}
+Tashman, L. J. (2000). Out-of-sample tests of forecasting accuracy.
+\textit{International Journal of Forecasting}, 16(4), 437--450.
+
+\bibitem{bergmeir2012}
+Bergmeir, C., \& Ben\'{i}tez, J. M. (2012). On the use of cross-validation for time
+series predictor evaluation. \textit{Information Sciences}, 191, 192--213.
+
+\bibitem{didarbekova2025}
+Didarbekova, N., et al. (2025). Advancing digital item development in Asian assessment
+systems: Insights from Kazakhstan's UNT. \textit{Frontiers in Education}, 10, 1654674.
+
+\bibitem{oecd2017}
+OECD. (2017). \textit{Higher Education in Kazakhstan 2017}. OECD Publishing.
+
+\bibitem{hellas2018}
+Hellas, A., et al. (2018). Predicting academic performance: A systematic literature
+review. \textit{ITiCSE 2018 Companion}, 175--199.
+
+\bibitem{yagci2022}
+Ya\u{g}c{\i}, M. (2022). Educational data mining: Prediction of students' academic
+performance using ML algorithms. \textit{Smart Learning Environments}, 9, 11.
+
+\bibitem{cortez2008}
+Cortez, P., \& Silva, A. (2008). Using data mining to predict secondary school student
+performance. \textit{FUBUTEC 2008}, 5--12.
+
+\bibitem{tomasevic2020}
+Tomasevic, N., et al. (2020). An overview and comparison of supervised data mining
+techniques for student exam performance prediction. \textit{Computers \& Education}, 143,
+103676.
+
+\bibitem{chen2016}
+Chen, T., \& Guestrin, C. (2016). XGBoost: A scalable tree boosting system.
+\textit{KDD '16}, 785--794.
+
+\bibitem{breiman2001}
+Breiman, L. (2001). Random forests. \textit{Machine Learning}, 45(1), 5--32.
+
+\bibitem{fernandez2014}
+Fern\'{a}ndez-Delgado, M., et al. (2014). Do we need hundreds of classifiers to solve
+real world classification problems? \textit{JMLR}, 15(90), 3133--3181.
+
+\bibitem{grinsztajn2022}
+Grinsztajn, L., et al. (2022). Why do tree-based models still outperform deep learning on
+typical tabular data? \textit{NeurIPS 2022}.
+
+\bibitem{shwartz2022}
+Shwartz-Ziv, R., \& Armon, A. (2022). Tabular data: Deep learning is not all you need.
+\textit{Information Fusion}, 81, 84--90.
+
+\bibitem{hollmann2025}
+Hollmann, N., et al. (2025). Accurate predictions on small data with a tabular foundation
+model. \textit{Nature}, 637, 319--326.
+
+\bibitem{corbett1994}
+Corbett, A. T., \& Anderson, J. R. (1994). Knowledge tracing: Modeling the acquisition of
+procedural knowledge. \textit{UMUAI}, 4(4), 253--278.
+
+\bibitem{piech2015}
+Piech, C., et al. (2015). Deep knowledge tracing. \textit{NeurIPS 2015}.
+
+\bibitem{khajah2016}
+Khajah, M., et al. (2016). How deep is knowledge tracing? \textit{EDM 2016}, 94--101.
+
+\bibitem{choi2020saint}
+Choi, Y., et al. (2020). Towards an appropriate query, key, and value computation for
+knowledge tracing. \textit{L@S '20}, 341--344.
+
+\bibitem{shin2021}
+Shin, D., et al. (2021). SAINT+: Integrating temporal features for EdNet correctness
+prediction. \textit{LAK21}, 490--496.
+
+\bibitem{choi2020ednet}
+Choi, Y., et al. (2020). EdNet: A large-scale hierarchical dataset in education.
+\textit{AIED 2020, LNCS 12164}, 69--73.
+
+\bibitem{gervet2020}
+Gervet, T., et al. (2020). When is deep learning the best approach to knowledge tracing?
+\textit{JEDM}, 12(3), 31--54.
+
+\bibitem{liu2021}
+Liu, Q., et al. (2021). A survey of knowledge tracing. \textit{arXiv:2105.15106}.
+
+\bibitem{embretson2000}
+Embretson, S. E., \& Reise, S. P. (2000). \textit{Item Response Theory for Psychologists}.
+Lawrence Erlbaum.
+
+\bibitem{klinkenberg2011}
+Klinkenberg, S., et al. (2011). Computer adaptive practice of maths ability using a new
+item response model. \textit{Computers \& Education}, 57(2), 1813--1824.
+
+\bibitem{pelanek2016}
+Pel\'{a}nek, R. (2016). Applications of the Elo rating system in adaptive educational
+systems. \textit{Computers \& Education}, 98, 169--179.
+
+\bibitem{settles2016}
+Settles, B., \& Meeder, B. (2016). A trainable spaced repetition model for language learning.
+\textit{ACL 2016}, 1848--1858.
+
+\bibitem{abdi2019}
+Abdi, S., et al. (2019). A multivariate Elo-based learner model for adaptive educational
+systems. \textit{EDM 2019}, 228--233.
+
+\bibitem{abdi2021}
+Abdi, S., et al. (2021). Modelling learners in adaptive educational systems: A multivariate
+Glicko-based approach. \textit{LAK21}, 497--503.
+
+\bibitem{glickman1999}
+Glickman, M. E. (1999). Parameter estimation in large dynamic paired comparison
+experiments. \textit{JRSS:C}, 48(3), 377--394.
+
+\bibitem{vovk2005}
+Vovk, V., et al. (2005). \textit{Algorithmic Learning in a Random World}. Springer.
+
+\bibitem{angelopoulos2023}
+Angelopoulos, A. N., \& Bates, S. (2023). Conformal prediction: A gentle introduction.
+\textit{Foundations and Trends in ML}, 16(4), 494--591.
+
+\bibitem{romano2019}
+Romano, Y., et al. (2019). Conformalized quantile regression. \textit{NeurIPS 2019}.
+
+\bibitem{gibbs2021}
+Gibbs, I., \& Cand\`{e}s, E. (2021). Adaptive conformal inference under distribution shift.
+\textit{NeurIPS 2021}.
+
+\bibitem{zaffran2022}
+Zaffran, M., et al. (2022). Adaptive conformal predictions for time series.
+\textit{ICML 2022}.
+
+\bibitem{rossellini2024}
+Rossellini, R., et al. (2024). Integrating uncertainty awareness into conformalized
+quantile regression. \textit{AISTATS 2024}.
+
+\bibitem{lundberg2017}
+Lundberg, S. M., \& Lee, S.-I. (2017). A unified approach to interpreting model
+predictions. \textit{NeurIPS 2017}.
+
+\bibitem{newell1981}
+Newell, A., \& Rosenbloom, P. S. (1981). Mechanisms of skill acquisition and the law of
+practice. In \textit{Cognitive Skills and Their Acquisition}, 1--55.
+
+\bibitem{turkmenbayev2025}
+Turkmenbayev, A., et al. (2025). The application of ML in predicting student performance
+in university engineering programs: A rapid review. \textit{Frontiers in Education}, 10,
+1562586.
+
+
+\bibitem{ghosh2020}
+Ghosh, A., Heffernan, N., \& Lan, A.~S. (2020).
+Context-aware attentive knowledge tracing.
+\textit{KDD '20}, 2330--2340.
+
+\bibitem{liu2023simplekt}
+Liu, Z., et al. (2023).
+simpleKT: A simple but tough-to-beat baseline for knowledge tracing.
+\textit{WWW '23}, 1400--1409.
+
+\bibitem{nakagawa2019}
+Nakagawa, H., Iwasawa, Y., \& Matsuo, Y. (2019).
+Graph-based knowledge tracing: Modeling student proficiency using graph neural networks.
+\textit{WI '19}, 156--163.
+
+\bibitem{tong2020}
+Tong, S., et al. (2020).
+Structure-based knowledge tracing with graph neural network.
+\textit{ICDM '20}, 541--550.
+
+\bibitem{ke2017}
+Ke, G., et al. (2017).
+LightGBM: A highly efficient gradient boosting decision tree.
+\textit{NeurIPS 2017}, 3149--3157.
+
+\bibitem{akiba2019}
+Akiba, T., Sano, S., Yanase, T., Ohta, T., \& Koyama, M. (2019).
+Optuna: A next-generation hyperparameter optimization framework.
+\textit{KDD '19}, 2623--2631.
+
+\end{thebibliography}
+
+%% ===================================================================
+%% Mandatory MDPI Applied Sciences sections
+%% ===================================================================
+
+\section*{Author Contributions}
+Conceptualization, A.S.; Methodology, A.S.; Software, A.S.; Formal analysis, A.S.;
+Visualization, A.S.; Supervision, A.S.; Project administration, A.S.;
+Writing---original draft preparation, A.S.;
+Data curation (platform database export, pseudo-skill field identification), A.B.\ and A.Z.;
+Resources (data access negotiation with platform operator), A.B.\ and A.Z.;
+Investigation (domain validation of Kazakhstani UNT conventions and score scales), A.Z., As.Z.\ and R.B.;
+Validation (conformal coverage results and per-discipline analysis review), A.S., A.B., A.Z., As.Z.\ and R.B.;
+Writing---review and editing, A.S., A.B., A.Z., As.Z.\ and R.B.
+All authors have read and agreed to the published version of the manuscript.
+
+\section*{Acknowledgments}
+The authors thank the platform operator for granting access to the anonymized records
+under a data-use agreement.
+
+\section*{Funding}
+This research received no external funding.
+
+\section*{Institutional Review Board Statement}
+Not applicable. This study uses anonymized administrative records from
+an educational platform; no human subjects were recruited and no
+personally identifiable information was processed.
+
+\section*{Informed Consent Statement}
+Not applicable.
+
+\section*{Data Availability Statement}
+\begin{sloppypar}
+The analysis code is publicly available at \url{https://github.com/Salimzhanov/GRACE-student-prediction}.
+The raw student performance data are proprietary to the platform operator and cannot be shared publicly due to
+data-use agreement restrictions. Aggregated results and all computed
+features used in the figures are included in the repository.
+\end{sloppypar}
+
+\section*{Conflicts of Interest}
+The authors declare no conflict of interest.
+Data access was granted under an internal data-use agreement between the research team
+and the platform operator; the platform provided anonymized records with no involvement
+in study design, analysis, or interpretation of results.
+
+%% ===================================================================
+%% Short Biographies of Authors
+%% ===================================================================
+
+\section*{Short Biographies of Authors}
+
+\textbf{Abylay Salimzhanov} is a researcher and PhD candidate in the School of
+Information Technologies at Kazakh-British Technical University (KBTU), Almaty,
+Kazakhstan (ORCID: 0000-0001-6630-585X).
+His research spans machine learning, educational data mining, and computational
+methods for virtual drug screening.
+He is the principal developer of the GRACE framework and is the first author of
+a study on calibrated weighted rank aggregation for virtual screening published
+in \textit{Computational and Structural Biotechnology Journal} (2024).
+
+\textbf{Artem Bykov} is the Head of Department at the International Information
+Technology University (IITU), Almaty, Kazakhstan, where he holds the degree of
+Candidate of Technical Sciences.
+His research covers data analysis, artificial intelligence, and geophysical
+monitoring systems; he is the author of more than 30 peer-reviewed publications
+with over 460 citations (Google Scholar).
+Recent work includes urban mobility modelling and transport route optimisation
+for the city of Almaty using anonymised telecommunications data.
+For this study, he performed platform database export, pseudo-skill field
+identification, and negotiated access to the anonymised student records.
+
+\textbf{Aadm Ziro} is affiliated with the International Information Technology
+University (IITU), Almaty, Kazakhstan.
+For this study, he contributed to the data curation pipeline (database export
+and pseudo-skill field identification), supported data access negotiation with
+the platform operator, and carried out domain validation of Kazakhstani Unified
+National Testing (UNT) conventions and score scales.
+
+\textbf{Ruslan Bulgakov} is affiliated with the Faculty of Information
+Technology, Al-Farabi Kazakh National University (KazNU), Almaty, Kazakhstan
+(ORCID: 0009-0002-2036-6651).
+He joined the project during the manuscript revision and contributed domain
+expertise in UNT examination standards and score-scale conventions, and
+participated in the validation of the conformal coverage results and the
+per-discipline analysis.
+
+\textbf{Aasso Ziro} is a Senior Lecturer in the School of Information Technology
+and Engineering at Kazakh-British Technical University (KBTU) and is concurrently
+affiliated with Al-Farabi Kazakh National University (KazNU), Almaty, Kazakhstan
+(ORCID: 0000-0002-5952-877X).
+He holds a PhD and specialises in information security, cybersecurity systems,
+data loss prevention (DLP), and security information and event management (SIEM).
+His recent publications include research on AI-driven information security audit
+methodologies (IEEE SIST~2023) and on evaluating information security system
+effectiveness via fuzzy inference (\textit{Scientific Journal of Astana IT
+University}, 2023).
+For this study, he contributed to domain validation of UNT score conventions and
+participated in reviewing and editing the manuscript.
+
+\end{document}

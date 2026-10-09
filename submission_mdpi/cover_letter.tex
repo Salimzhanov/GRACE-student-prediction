@@ -1,0 +1,116 @@
+\documentclass[12pt]{letter}
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{url}
+\usepackage{parskip}
+\usepackage{lmodern}
+\usepackage{cmap}
+
+\date{8 October 2026}
+\address{}
+\signature{}
+
+\begin{document}
+
+\begin{letter}{The Editor-in-Chief \\
+\textit{Applied Sciences} (ISSN 2076-3417) \\
+Section: Computing and Artificial Intelligence \\
+MDPI AG, Basel, Switzerland}
+
+\opening{Dear Editor,}
+
+We submit for your consideration the manuscript entitled ``Predicting Student Test Scores with
+Reliable Score Ranges: A Leakage-Free Streaming-Rating Study of 2.2 Million Records from a
+Private Kazakhstani UNT-Preparation Platform'' by Abylay Salimzhanov, Artem Bykov,
+Aadm Ziro, Ruslan Bulgakov, and Aasso Ziro. The paper introduces GRACE, a streaming rating architecture that produces a calibrated
+score range alongside each predicted score, updating in constant time as new student attempts
+arrive.
+
+Two practical obstacles prevent machine-learning score-prediction systems from being trusted in
+operational educational platforms. Evaluation accuracy is routinely inflated by data leakage, and
+point predictions give educators no indication of when a forecast should be treated with caution.
+Both problems appear consistently in the published literature, and both are addressed here on a
+real-world dataset of 2,208,313 practice-test records from 55,482 students collected between 2018
+and 2025 by a Kazakhstani university-entrance-preparation company.
+
+A factorial audit quantifies the joint evaluation optimism produced by two widespread
+feature-engineering errors combined with random train/test splitting. On this dataset---the
+largest longitudinal test-preparation corpus reported from Central Asia---the audit yields a
+combined $R^2$ inflation of $+0.349$, suggesting that a substantial share of accuracy
+improvements claimed in prior published work reflects evaluation artifacts rather than genuine
+predictive gains. The released audit pipeline provides a reusable protocol for other educational
+datasets.
+
+GRACE (Glicko-informed Rating-Augmented Confidence Estimation) is a hierarchical streaming
+rating system adapted from binary-outcome psychometrics to continuous-score regression. Its
+central novelty is the dual role of the Glicko rating deviation (RD): RD simultaneously serves as
+a real-time uncertainty state within the rating layer and as the pre-specified grouping variable
+for Mondrian conformal quantile regression, so that prediction-interval width adapts automatically
+to measured student uncertainty---widening for cold-start and long-inactive students---without any
+post-hoc binning decisions. The rating layer updates in $O(1)$ time per attempt with no
+retraining.
+
+GRACE is evaluated under rolling-origin temporal evaluation across five expanding annual windows
+($R^2 = 0.522 \pm 0.052$), with ablation studies, paired-bootstrap significance tests (Mean
+Absolute Error improvement $-1.79$ percentage points, 95\% CI $[-1.81, -1.77]$), and per-group
+coverage analysis. Score ranges achieve 0.886 empirical coverage (90\% target) across three RD strata (0.880--0.891), with mean width 48.0~pp.
+In 2022, the leakage-free baseline collapses to $R^2 = 0.048$ while GRACE holds at $0.437$,
+illustrating the practical value of the rating features under distributional shift.
+
+The manuscript has not been published previously, is not under consideration for publication
+elsewhere, and will not be submitted elsewhere before a decision is received from
+\textit{Applied Sciences}. All authors have read and approved the submitted version. The study
+uses anonymized administrative records provided under a data-use agreement; no human subjects
+were recruited and no personally identifiable information was processed, so institutional ethical
+approval was not required. The analysis code is publicly available at
+\url{https://github.com/Salimzhanov/GRACE-student-prediction}.
+
+We believe this paper fits the Computing and Artificial Intelligence section of
+\textit{Applied Sciences} and will be of interest to readers working on educational data mining,
+adaptive learning systems, applied machine learning, and evaluation methodology. We would be
+grateful for the opportunity to have this work reviewed.
+
+\closing{Yours sincerely,}
+
+\noindent Abylay Salimzhanov (Corresponding Author)\\
+School of Information Technologies\\
+Kazakh-British Technical University (KBTU)\\
+59 Tole bi Street, Almaty 050000, Kazakhstan\\
+\texttt{a.salimzhanov@kbtu.kz}\\
+ORCID: 0000-0001-6630-585X
+
+\bigskip
+
+\noindent Artem Bykov\\
+International Information Technology University (IITU)\\
+34A Manas Street, Almaty 050000, Kazakhstan\\
+\texttt{a.bykov@iitu.edu.kz}\\
+ORCID: 0000-0002-9563-5185
+
+\bigskip
+
+\noindent Aadm Ziro\\
+International Information Technology University (IITU)\\
+34A Manas Street, Almaty 050000, Kazakhstan\\
+\texttt{aziro@iitu.edu.kz}\\
+ORCID: 0009-0006-7445-201X
+
+\bigskip
+
+\noindent Ruslan Bulgakov\\
+Al-Farabi Kazakh National University (KazNU), Almaty, Kazakhstan\\
+\texttt{bulgakov.ruslan.kaznu@gmail.com}\\
+ORCID: 0009-0002-2036-6651
+
+\bigskip
+
+\noindent Aasso Ziro\\
+Kazakh-British Technical University (KBTU)\\
+59 Tole bi Street, Almaty 050000, Kazakhstan\\
+\texttt{aa.ziro@kbtu.kz}\\
+ORCID: 0000-0002-5952-877X
+
+\end{letter}
+
+\end{document}

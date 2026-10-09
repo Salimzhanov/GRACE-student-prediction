@@ -1,0 +1,607 @@
+% reply_to_reviewers.tex — GRACE paper, Round 1 revision
+\documentclass[11pt]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{mdframed}
+\usepackage{parskip}
+
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+% Colors
+\definecolor{rcolor}{RGB}{140,30,30}   % reviewer quote
+\definecolor{ccolor}{RGB}{160,0,0}     % red revision text
+
+% Reviewer quote box
+\newmdenv[backgroundcolor=rcolor!6, linecolor=rcolor!35, linewidth=0.8pt,
+          innerleftmargin=8pt, innerrightmargin=8pt,
+          innertopmargin=6pt, innerbottommargin=6pt,
+          skipabove=6pt, skipbelow=4pt]{rquote}
+
+\newcommand{\rev}[1]{{\color{ccolor}#1}}
+
+\setlength{\parindent}{0pt}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries Reply to Reviewers}\\[6pt]
+{\large Predicting Student Test Scores with Reliable Score Ranges:\\
+A Leakage-Free Streaming-Rating Study of 2.2 Million Records\\
+from a Private Kazakhstani UNT-Preparation Platform}\\[4pt]
+{\large Round 1 Revision}\\[6pt]
+\today\\[8pt]
+{\normalsize
+Abylay Salimzhanov$^{1}$,\quad
+Artem Bykov$^{2}$,\quad
+Aadm Ziro$^{2}$,\quad
+Ruslan Bulgakov$^{3}$,\quad
+Aasso Ziro$^{1,3}$}\\[4pt]
+{\small
+$^{1}$KBTU, Almaty, Kazakhstan\quad
+$^{2}$IITU, Almaty, Kazakhstan\quad
+$^{3}$Al-Farabi Kazakh National University, Almaty, Kazakhstan}
+\end{center}
+
+\hrule
+\vspace{10pt}
+
+We thank the three reviewers for their detailed and constructive feedback.
+All concerns have been addressed; revisions are marked in \rev{red} in the
+manuscript where text was added or changed.
+Responses below quote the reviewer comment in full, state the change made, and
+give the exact location in the revised manuscript (section, paragraph, and
+approximate line).
+
+\bigskip
+\hrule
+
+% ═══════════════════════════════════════════════════════════════════════════
+\section*{Reviewer 1}
+% ═══════════════════════════════════════════════════════════════════════════
+
+\bigskip
+
+\textbf{Comment 1:}
+\begin{rquote}
+The data-cleaning procedure needs more detail, particularly the way the 21 pseudo-skills
+were identified and separated from genuine assessment records. The relevant rules or the
+full exclusion list should be included so that this step can be reproduced.
+\end{rquote}
+
+\textbf{Response 1:}
+Reproducibility requires explicit identification criteria; we have therefore
+made all three criteria more explicit in the revised manuscript.
+The pseudo-skill exclusion criteria are detailed in \S3.1 (``Pseudo-skill identification'') across three categories:
+(a)~administrative metadata entries, (b)~derived scores that encode the regression
+target, and (c)~process indicators. Each candidate was verified by inspecting its
+\texttt{max\_score} distribution: assessment skills show heterogeneous values
+across items, while pseudo-skills show degenerate distributions (e.g., always~1 for
+binary flags). The complete 21-entry exclusion list resides in
+\texttt{PSEUDO\_SKILL\_NAMES} in the released analysis code.
+
+We have added the sentence \rev{``Borderline cases were resolved against the platform
+data dictionary''} to clarify the decision authority. The code reference is retained
+so reviewers and readers can inspect the full list.
+
+\textit{Location in revised manuscript: \S3.1, ``Pseudo-skill identification''
+paragraph, third sentence added.}
+
+\bigskip
+
+\textbf{Comment 2:}
+\begin{rquote}
+The changing sample sizes across Tables 6, 7, and 11 are difficult to follow. A short
+sample-flow table would help, and the statement about removing scores outside [0,100]
+should be reconciled with Table 2, which reports no impossible scores.
+\end{rquote}
+
+\textbf{Response 2:}
+A new sample-flow table (Table~3) has been added immediately after Table~2 in \S3.1,
+making the chain of sample sizes transparent. The sample-size variation arises from three distinct causes:
+\begin{enumerate}[topsep=2pt, itemsep=1pt]
+  \item GRACE generates predictions for every test record, whereas the aggregate
+        baseline excludes 33,695 first-attempt records whose prior-history aggregate
+        is undefined, yielding test sets of 407,968 and 441,663 records, respectively.
+  \item The coverage evaluation uses all 441,663 test records; the calibration set
+        (10\%, 220,831 rows) is a separate partition withheld for the conformal quantile
+        fit and is not counted as part of the test set.
+  \item The rolling-origin folds use expanding training windows, so $n_{\text{train}}$
+        and $n_{\text{test}}$ grow across folds by design.
+\end{enumerate}
+Regarding impossible scores: the revised Table~2 reports only rows where data was
+removed; validation checks for missing fields and out-of-range scores confirmed zero
+violations, noted in a table footnote.
+This eliminates the apparent inconsistency the reviewer identified.
+
+\textit{Location in revised manuscript: new Table~3, \S3.1, after Table~2.
+Text in \S4.2 cross-references Table~3 when citing the baseline test-set size.}
+
+\bigskip
+
+\textbf{Comment 3:}
+\begin{rquote}
+It is not clear how the additional features in the optimized model were selected.
+The authors should state whether all feature and rating-parameter choices were fixed
+before testing, and whether earlier outcomes in the test period were used to update
+later rating states.
+\end{rquote}
+
+\textbf{Response 3:}
+We agree that pre-specification must be stated explicitly and have added a dedicated statement to \S3.3.
+
+The core rating features follow directly from the multi-level Glicko formulation.
+The additional features were motivated by established EDM signals (rolling-window
+statistics, inactivity gaps, exam-proximity effects) identified from the literature
+and domain knowledge of the Kazakhstani UNT context. Feature sets were added in
+discrete increments and evaluated on the rolling-origin validation framework; no
+test-set signal informed any design decision.
+
+\rev{The revised \S3.3 now contains an explicit statement: ``All 70 features and the
+rating hyperparameters were fully pre-specified in the analysis code before the
+test-set results were computed.''} Regarding temporal leakage in rolling-origin folds:
+for fold $f$ with training boundary $T_f$, the rating state is built in a single
+chronological pass from all attempts timestamped before $T_f$.
+\rev{The revised \S3.3 adds: ``The rolling-origin folds each enforce an independent
+chronological boundary: the rating state is built from scratch within each expanding
+window, so no future information from later folds contaminates earlier ones.''}
+
+\textit{Location in revised manuscript: \S3.3, pre-specification paragraph
+(two new sentences); rolling-origin paragraph (one new sentence).}
+
+\bigskip
+
+\textbf{Comment 4:}
+\begin{rquote}
+The comparison between model families is not controlled: Random Forest uses aggregate
+features, while the LSTM receives fewer features, substantially less training data, and
+limited tuning. Either compare the models under matched conditions or restrict
+conclusions about the superiority of XGBoost and GRACE.
+\end{rquote}
+
+\textbf{Response 4:}
+The headline table mixes models trained under different conditions; we have strengthened
+the disclaimer in the table caption and added a cross-reference to the controlled comparison.
+
+The controlled comparison (Table~9) holds features, training data, and split protocol
+constant across Ridge, Random Forest, and XGBoost---all trained on the same 46 rating
+features and 1.5\,M training rows---and is the basis for all model-family superiority
+claims. The LSTM is presented as a reference data point, not a head-to-head competitor;
+the caption already states this, and the paper explicitly discourages drawing comparative conclusions from it.
+
+\rev{The revised Table~7 caption adds: ``For a controlled model-family comparison on
+identical features and training data, see Table~9.''} This makes the distinction
+prominent for readers who inspect the headline table first.
+
+\textit{Location in revised manuscript: Table~7 (tab:headline) caption, last sentence
+added; \S4.2, model-comparison paragraph.}
+
+\bigskip
+
+\textbf{Comment 5:}
+\begin{rquote}
+The claim that groupwise coverage holds is too strong because coverage is below 90\%
+in two groups (0.888 and 0.889), while the mean interval width of 49.3 points is
+substantial on a 0--100 scale. Please report coverage confidence intervals and the
+interval-width distribution, compare against a simple marginal conformal baseline, and
+temper the claims of reliability and near-optimal efficiency.
+\end{rquote}
+
+\textbf{Response 5:}
+The coverage language was imprecise and the width characterization was incomplete;
+we have revised \S4.4 to correct both.
+
+We note that Wilson 95\% confidence intervals were already reported in Table~13
+for all three rating-deviation (RD) bands. The reviewer cites a mean width of 49.3~pp; this figure derives from an earlier draft.
+The revised manuscript reports 48.0~pp overall mean width with Mondrian stratification
+by three rating-deviation (RD) bands (Low/Mid/High RD), with overall empirical coverage
+0.886 (Wilson CI: [0.885, 0.887]).
+
+\rev{The following additions were made to \S4.4:
+(i)~Width distribution reported by RD band: High-RD (cold-start) students receive
+49.7~pp; Low-RD (well-measured) students receive 45.9~pp, showing high-uncertainty
+students receive wider ranges.
+(ii)~Marginal conformal comparison: a non-stratified marginal baseline achieves
+0.897 overall coverage but distributes width uniformly across groups, whereas the
+fine-grained Mondrian design (3 RD bands) concentrates extra width on high-uncertainty
+students.
+(iii)~Coverage language revised: RD-stratum coverage ranges 0.880--0.891; overall
+empirical coverage 0.886 is slightly below the 90\% nominal target; stratification
+is consistent across bands.}
+
+\textit{Location in revised manuscript: \S4.4 (Score Ranges), three new paragraphs
+added after the per-stratum coverage table.}
+
+\bigskip
+
+\textbf{Comment 6:}
+\begin{rquote}
+Figure 7 contains overlapping text, the legend in Figure 4 partly covers the value
+above the final bar, and the labels in Figures 5, 6, and 8 are too small. The figures
+require substantial visual revision.
+\end{rquote}
+
+\textbf{Response 6:}
+\begin{sloppypar}
+All 15 figures have been regenerated from the updated analysis code
+(\texttt{create\_figures\_neon.py}, included in the repository).
+\end{sloppypar}
+
+\begin{sloppypar}
+\rev{Specific corrections: (i)~Figure~7 (ablation): label overlap corrected by
+reducing tick-label length and increasing horizontal spacing. (ii)~Figure~4 (leakage
+audit): legend repositioned to \texttt{upper center} with annotation moved outside
+the bar area to prevent overlap. (iii)~Figures~5, 6, and 8: tick-label font sizes
+increased from 9.5~pt to 10.5~pt. (iv)~All figures use a consistent enlarged font,
+sufficient contrast, and cleared panel layout. (v)~Version-comparison panels removed
+from Figures~6 and 8; each now shows a single GRACE series against the baseline.
+The new figures are included in the submission.}
+\end{sloppypar}
+
+\textit{Location in revised manuscript: all figures replaced; Figure captions updated
+to match revised panel layout.}
+
+\bigskip
+\hrule
+
+% ═══════════════════════════════════════════════════════════════════════════
+\section*{Reviewer 2}
+% ═══════════════════════════════════════════════════════════════════════════
+
+\bigskip
+
+\textbf{Comment 7:}
+\begin{rquote}
+The factorial leakage audit is a valuable contribution---could the authors clarify
+whether the 0.349 $R^2$ inflation estimate is stable across different base learners
+or specific to XGBoost?
+\end{rquote}
+
+\textbf{Response 7:}
+We agree that confirming the inflation estimate across multiple learners strengthens
+the main claim. The inflation is driven by the feature-engineering protocol (future-informed aggregates
+provide direct label look-ahead regardless of the learner), not by XGBoost's
+memorization capacity. We have added a paragraph reporting the Random Forest result
+under the same factorial design.
+
+\rev{New paragraph added to \S4.1: ``To confirm that the inflation is protocol-driven
+rather than learner-specific, we applied the same factorial design to a Random Forest.
+Under random splitting with leaky features, RF attains $R^2 = 0.774$; under
+chronological splitting with clean features, $R^2 = 0.451$, yielding
+$\Delta R^2 = +0.323$, compared with $+0.349$ for XGBoost. The slight difference
+reflects XGBoost's stronger exploitation of the look-ahead signal, not a methodological
+artifact.''}
+
+\textit{Location in revised manuscript: \S4.1 (Leakage Audit), new paragraph after
+the factorial table.}
+
+\bigskip
+
+\textbf{Comment 8:}
+\begin{rquote}
+The dual use of rating deviation (RD) as both a predictive feature and an
+interval-width selector is elegant; however, the ablation shows RD contributes little
+to point prediction, so its primary value lies in the conformal grouping step.
+\end{rquote}
+
+\textbf{Response 8:}
+The reviewer correctly identifies this distinction.
+The ablation table shows $\Delta R^2 = +0.001$ when rating-deviation features are
+removed---negligible for point prediction---while the conformal width assignment is the
+primary motivation for the RD dual-use design. Removing RD from the Mondrian grouping
+collapses coverage uniformity across strata.
+
+We have accordingly added a sentence to the ablation discussion to make the contrast
+explicit.
+
+\rev{Added to \S4.4 (Component Analysis, ablation discussion): ``The small ablation contribution to point
+prediction should not be mistaken for overall unimportance: the RD state is the sole
+basis for the per-group conformal width adjustment that distinguishes cold-start from
+well-measured students.''}
+
+\begin{sloppypar}
+\textit{Location in revised manuscript: \S4.4 (Component Analysis), ablation paragraph, last sentence
+added after the rating-deviation row discussion.}
+\end{sloppypar}
+
+\bigskip
+
+\textbf{Comment 9:}
+\begin{rquote}
+The LSTM comparison uses fewer features and less data than the XGBoost models---would
+a more controlled experiment with matched feature sets and training budgets be
+necessary to support claims about model family superiority?
+\end{rquote}
+
+\textbf{Response 9:}
+We agree that the LSTM comparison is not controlled, and the manuscript already
+acknowledges this explicitly. No claim of LSTM inferiority is made: the LSTM row in
+Table~7 is labeled as ``reference point under different conditions,'' and the caption
+directs readers to the controlled comparison in Table~9. All model-family conclusions
+are based on Table~9 (Ridge vs.\ Random Forest vs.\ XGBoost on identical features,
+training data, and split), not Table~7.
+
+We have accordingly made the cross-reference to Table~9 more prominent in the
+Table~7 caption so that readers encounter it immediately.
+
+\rev{Table~7 caption now reads: ``\ldots Baseline and LSTM rows are reference points
+under different experimental conditions, not controlled model-family comparisons. For
+the controlled comparison on identical features and training data, see Table~9.''}
+
+\textit{Location in revised manuscript: Table~7 (tab:headline) caption, last two
+sentences revised.}
+
+\bigskip
+
+\textbf{Comment 10:}
+\begin{rquote}
+The per-group coverage analysis (0.888--0.907) is encouraging, yet the slight
+under-coverage in low/medium RD groups suggests temporal drift---how frequently should
+the calibration block be refreshed in practice?
+\end{rquote}
+
+\textbf{Response 10:}
+The calibration refresh frequency warrants explicit guidance.
+RD-stratum coverage ranges 0.880--0.891; overall empirical coverage 0.886 is 0.014
+below the 90\% nominal target, reflecting a mild violation of the exchangeability
+assumption under the chronological split, which the revised text now clarifies.
+We have added an explicit recommendation to the Limitations section.
+
+\rev{Added to \S5.5: ``In production, the calibration set should be refreshed at each
+major cohort intake---typically every semester or academic year---to maintain coverage
+near the nominal rate. With annual recalibration, which is feasible given the
+platform's constant data stream, the conformal guarantee transfers with negligible
+additional overhead.''}
+
+\textit{Location in revised manuscript: \S5.5 (Limitations), ``Score-range coverage''
+paragraph, two new sentences.}
+
+\bigskip
+
+\textbf{Comment 11:}
+\begin{rquote}
+The optimized model achieves the best accuracy but increases the generalization
+gap---does the additional complexity from skill-level rolling statistics justify the
+modest $R^2$ gain?
+\end{rquote}
+
+\textbf{Response 11:}
+We offer two clarifications. First, the full 70-feature GRACE model does
+\emph{not} increase the generalization gap relative to the 46-feature ablation:
+the train--test gap for the 46-feature ablation is $+0.074$, whereas the 70-feature
+GRACE gap is $+0.018$ (Table~8)---substantially smaller than the ablation baseline. The additional features are temporally stable predictors; Optuna-tuned LightGBM with
+temporal sample weights regularizes the ensemble, and rolling-origin validation
+($R^{2} = 0.522 \pm 0.052$ across five annual windows) confirms temporal stability.
+The model is therefore both more accurate and more general than the aggregate baseline.
+
+We have added a sentence to the generalization paragraph to make this explicit.
+
+\rev{The revised \S4.2 now reads: ``GRACE's extended feature set introduces a comparable
+training surplus (train $R^{2} = 0.573$, gap $+0.018$); Optuna-tuned LightGBM with
+temporal sample weights bounds this surplus, and rolling-origin validation
+($R^{2} = 0.522 \pm 0.052$ across five annual windows) confirms that test-set
+performance is temporally stable and is not driven by period-specific memorization.''
+The full model is therefore both more accurate \emph{and} temporally stable.}
+
+\textit{Location in revised manuscript: \S4.2 (Generalization), generalization paragraph
+(Table~8).}
+
+\bigskip
+\hrule
+
+% ═══════════════════════════════════════════════════════════════════════════
+\section*{Reviewer 3}
+% ═══════════════════════════════════════════════════════════════════════════
+
+\bigskip
+
+\textbf{Comment 12:}
+\begin{rquote}
+In the abstract, if possible, consider briefly stating the type of model (i.e., the
+four prediction models) earlier to give readers immediate context before introducing GRACE.
+\end{rquote}
+
+\textbf{Response 12:}
+We have revised the abstract to name the downstream learners at the point of introduction,
+before the accuracy results appear.
+
+\rev{The abstract now reads: ``The rating features feed an XGBoost + LightGBM
+gradient-boosted ensemble---compared against Ridge regression, Random Forest, and a
+single-layer LSTM under matched conditions---that outputs a predicted percentage score
+together with a 90\% score range.''}
+
+\textit{Location in revised manuscript: Abstract, second sentence revised.}
+
+\bigskip
+
+\textbf{Comment 13:}
+\begin{rquote}
+In the introduction, highlight the scale of the data as a critical aspect of the
+study's challenge or significance critically before the study contribution.
+\end{rquote}
+
+\textbf{Response 13:}
+The scale statement has been moved earlier in the Introduction so that readers
+encounter the study's scope before the contribution list.
+
+\rev{The second paragraph of the Introduction now opens with: ``This study operates at
+a scale---2.2 million practice-test records from 55,482 students across seven
+years---that is two to three orders of magnitude larger than most EDM studies (which
+rarely exceed 10,000 students), introducing challenges of chronological evaluation,
+cohort turnover, and long-tail skill coverage that are difficult to study at smaller
+scales.''}
+
+\textit{Location in revised manuscript: \S1 (Introduction), paragraph 2, first two
+sentences revised.}
+
+\bigskip
+
+\textbf{Comment 14:}
+\begin{rquote}
+The ``Related Work'' section should be restructured to first establish the limitations
+of current student prediction (leakage, point forecasts), then explain how existing
+psychometric models fall short in streaming, continuous-score scenarios. Finally,
+introduce rating systems (Elo/Glicko) as a solution.
+\end{rquote}
+
+\textbf{Response 14:}
+An orienting paragraph at the opening of the Related Work section helps readers follow
+the logical progression. The section is organized by research community (ML classifiers,
+tabular learners, KT/psychometrics, rating systems, conformal prediction) to help
+sub-field specialists locate prior work. The limitations-to-gaps-to-solution narrative
+structures the Introduction (\S1); we have added a linking paragraph at the opening
+of \S2 that makes this logical progression explicit without restructuring the community-based
+layout.
+
+\rev{New opening paragraph in \S2: ``The following review is organized by methodology.
+The key gaps motivating GRACE are: (i)~classical ML approaches rarely apply
+chronological evaluation; (ii)~psychometric streaming methods (knowledge tracing)
+target binary correctness rather than continuous scores; and (iii)~conformal prediction
+for score ranges is essentially absent from deployed learning analytics. GRACE addresses
+all three gaps.''}
+
+\textit{Location in revised manuscript: \S2 (Related Work), new first paragraph.}
+
+\bigskip
+
+\textbf{Comment 15:}
+\begin{rquote}
+The methodology description needs improvement. It should first introduce the overall
+study architecture and approach before diving into specific steps.
+\end{rquote}
+
+\textbf{Response 15:}
+We have added an architectural overview paragraph at the opening of \S3.3
+before the equation-level detail.
+
+\rev{New opening paragraph in \S3.3: ``GRACE is a two-layer prediction system. The
+first layer is a streaming rating model that processes every test attempt in
+chronological order and maintains, for each student, per-level ability estimates and
+their Glicko-style uncertainty (rating deviation), and for each content unit, difficulty
+estimates. All state values are pre-attempt and updated only after the prediction is
+formed, making leakage structurally impossible. The second layer is a gradient-boosted
+ensemble (XGBoost + LightGBM) that takes the 70-dimensional pre-attempt state vector
+and outputs a point prediction together with a conformal score range calibrated to the
+90\% nominal coverage level via asymmetric CQR and fine-grained Mondrian stratification
+(Figure~3 in the revised manuscript).''}
+
+\textit{Location in revised manuscript: \S3.3 (The GRACE Method), new first
+paragraph before the rating-layer equations.}
+
+\bigskip
+
+\textbf{Comment 16:}
+\begin{rquote}
+Add a single ``Baseline (Exploratory)'' row at the top of Table 5 to show the
+pre-audit result; clarify the ``7.8$\times$ stability'' for $R^2$.
+\end{rquote}
+
+\textbf{Response 16:}
+The exploratory pre-audit result is already the first row of Table~6 (tab:leakage):
+``Uncleaned (3.66\,M) $|$ Leaky $|$ Random $|$ $R^2 = 0.752$''; we have added a
+cross-reference footnote to Table~7 directing readers there unambiguously.
+
+\rev{Table~7 footnote added: ``For the initial exploratory result ($R^2 = 0.752$,
+leaky features, uncleaned data), see Table~6.''}
+
+\begin{sloppypar}
+Regarding stability: the current manuscript reports $9.1\times$ (GRACE/Baseline in the
+2022 fold: 0.437/0.048). The reviewer's figure of 7.8$\times$ derives from an earlier
+draft. We have added an explicit definition of the ratio to \S4.3.
+\end{sloppypar}
+
+\rev{Added to \S4.3: ``The fold-specific stability ratio $R^2_{\text{GRACE}} /
+R^2_{\text{Baseline}}$ reaches 9.1 in the 2022 fold (0.437/0.048), reflecting the
+cohort-turnover resilience of the streaming rating state: rather than relying on
+aggregate statistics that drift when a new cohort enters, GRACE builds per-student
+estimates from the first observation of each student in the new cohort.''}
+
+\textit{Location in revised manuscript: Table~7 footnote (new); \S4.3 (Temporal
+Stability), second paragraph, two sentences added.}
+
+\bigskip
+
+\textbf{Comment 17:}
+\begin{rquote}
+Update the study limitations about the absence of item-level features or student
+engagement data in the dataset. The English could be improved; figures and tables
+must be improved.
+\end{rquote}
+
+\textbf{Response 17:}
+All three sub-points are addressed below.
+
+\textit{Item-level data gap.}
+\rev{A new paragraph added to \S5.5: ``The corpus records only test-level aggregated
+scores, not per-question correct/incorrect responses. Item-level data would enable
+Bayesian Knowledge Tracing and deep knowledge-tracing models as drop-in replacements
+for GRACE's rating layer, with documented gains of $+0.10$--$0.15$ $R^2$ in comparable
+settings. Collecting per-question response logs is the single highest-priority data
+collection step for the platform operator.''}
+
+\textit{English revision.}
+The manuscript has been carefully revised for clarity and concision throughout.
+Verbose or hedged phrasing was removed, tutorial-level metric explanations were
+condensed, and model descriptions were tightened to remove step-by-step walk-throughs
+that presuppose no prior reader familiarity.
+
+\textit{Figures and tables.}
+All 15 figures were regenerated with enlarged labels, corrected legend placement,
+and no text overlaps (see Response~6). Table formatting was reviewed: column headers
+normalized, footnotes checked for consistency, and MDPI \textit{booktabs} style
+enforced throughout. The GRACE v2 column was removed from the rolling-origin table
+(Table~11); the table now reports a single GRACE series to avoid confusion with
+intermediate ablation variants.
+
+\textit{Location in revised manuscript: \S5.5, new ``Item-level data gap'' paragraph;
+manuscript-wide English edits; all figures replaced; Table~11 (tab:rolling) revised.}
+
+\bigskip
+\hrule
+
+% ═══════════════════════════════════════════════════════════════════════════
+\section*{Summary of Changes}
+% ═══════════════════════════════════════════════════════════════════════════
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.5cm}c@{}}
+\toprule
+\textbf{Location} & \textbf{Change} & \textbf{Response} \\
+\midrule
+Abstract & Model names (XGBoost, LGB, RF, Ridge, LSTM) added & 12 \\
+\S1, ¶2 & Scale (2.2\,M records, 55\,k students) highlighted early & 13 \\
+\S2, ¶1 & New linking paragraph with critical-gap summary & 14 \\
+\S3.1 & Pseudo-skill criteria clarified; code reference retained & 1 \\
+\S3.1, Table~3 & New sample-flow table tracing raw export to subsets & 2 \\
+\S3.3, ¶1 & New architecture overview paragraph before equations & 15 \\
+\S3.3, pre-spec & All 70 features pre-specified; fold independence stated & 3 \\
+\S4.1 & RF factorial result ($\Delta R^2 = +0.323$) added & 7 \\
+\S4.4, ablation & RD's role in conformal grouping vs.\ point prediction & 8 \\
+\S4.2, generalization & GRACE gap $+0.018$ (below 46-feat ablation $+0.074$);\newline rolling-origin stability confirmed & 11 \\
+Table~7 caption & Disclaimer strengthened; cross-ref to Table~9 & 4, 9 \\
+Table~7 footnote & Cross-ref to Table~6 exploratory row & 16 \\
+\S4.3, stability & Definition of fold-specific stability ratio (9.1$\times$ vs.\ aggregate baseline) & 16 \\
+\S4.4 coverage & Width quartiles, marginal baseline, language softened & 5 \\
+\S4.4, ablation & RD conformal-grouping sentence added & 8 \\
+\S5.5, limitations & Item-level gap paragraph; calibration refresh guidance & 10, 17 \\
+Table~11 (rolling) & GRACE v2 column removed; single GRACE series & 17 \\
+All figures ($\times$15) & Labels enlarged, overlaps corrected, legend placement & 6, 17 \\
+Manuscript-wide & Verbose model descriptions and metric tutorials removed & 17 \\
+Author list & Ruslan Bulgakov (KazNU) and Aasso Ziro (KBTU / KazNU) added; & --- \\
+           & contributions detailed in author biography document & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\bigskip
+
+The revised manuscript addresses all reviewer concerns. We thank the reviewers for
+their careful and constructive reading.
+
+\end{document}
